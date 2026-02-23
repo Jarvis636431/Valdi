@@ -487,7 +487,12 @@ static void updateRuntimeManagersArray(void (^callback)(NSMutableArray<NSValue *
 
     auto runtime =
     _cppInstance->createRuntime(Valdi::makeShared<ValdiIOS::ResourceLoader>(customModuleProvider), static_cast<double>(_viewManagerContext->getViewManager().getPointScale()));
+    _cppInstance->emitXpatCreateRuntimeMetrics();
+
     SCValdiRuntime *objcRuntime = [[SCValdiRuntime alloc] initWithCppInstance:runtime viewManagerContext:_viewManagerContext runtimeManager:self fontManager:_fontManager];
+
+    _cppInstance->emitIosRuntimeCreateMetrics();
+
     _cppInstance->attachHotReloader(runtime);
 
     return objcRuntime;

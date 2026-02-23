@@ -130,7 +130,6 @@
         _jsRuntime = [[SCValdiJSRuntimeImpl alloc] initWithJSRuntimeProvider:self];
 
         _viewManagerContext->setAccessibilityEnabled(_runtime->getResourceManager().enableAccessibility());
-
     }
 
     return self;

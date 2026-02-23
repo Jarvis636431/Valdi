@@ -736,6 +736,14 @@ void RuntimeManager::emitInitMetrics() {
     emitMetrics(&Metrics::emitRuntimeManagerInitLatency);
 }
 
+void RuntimeManager::emitXpatCreateRuntimeMetrics() {
+    emitMetrics(&Metrics::emitRuntimeManagerXpatInitLatency);
+}
+
+void RuntimeManager::emitIosRuntimeCreateMetrics() {
+    emitMetrics(&Metrics::emitRuntimeManagerIosInitLatency);
+}
+
 void RuntimeManager::emitUserSessionReadyMetrics() {
     emitMetrics(&Metrics::emitUserSessionReadyLatency);
 }

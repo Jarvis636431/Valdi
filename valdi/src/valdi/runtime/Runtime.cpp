@@ -898,6 +898,11 @@ void Runtime::setShouldProcessUpdatesSynchronously(bool shouldProcessUpdatesSync
 }
 
 void Runtime::emitInitMetrics() {
+    auto metrics = getMetrics();
+    if (metrics != nullptr && _initStopWatch != nullptr) {
+        metrics->emitRuntimePreInitLatency(_initStopWatch->elapsed());
+    }
+
     runWithExclusiveJsThreadLock([this]() {
         auto initStopWatch = std::move(_initStopWatch);
         auto metrics = getMetrics();

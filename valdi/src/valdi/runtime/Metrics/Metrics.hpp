@@ -49,6 +49,9 @@ public:
     virtual void emitANR() = 0;
 
     virtual void emitRuntimeManagerInitLatency(const MetricsDuration& duration) = 0;
+    virtual void emitRuntimeManagerXpatInitLatency(const MetricsDuration& duration) = 0;
+    virtual void emitRuntimeManagerIosInitLatency(const MetricsDuration& duration) = 0;
+    virtual void emitRuntimePreInitLatency(const MetricsDuration& duration) = 0;
     virtual void emitRuntimeInitLatency(const MetricsDuration& duration) = 0;
     virtual void emitUserSessionReadyLatency(const MetricsDuration& duration) = 0;
 
