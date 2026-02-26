@@ -511,6 +511,7 @@ kt_jvm_test(
     ],
     deps = [
         ":valdi_java",
+        "//src/valdi_modules/src/valdi/valdi_test:valdi_test_kt",
         "@android_mvn//:org_junit_jupiter_junit_jupiter_api",
         "@android_mvn//:org_junit_jupiter_junit_jupiter_params",
         "@android_mvn//:org_junit_platform_junit_platform_console",

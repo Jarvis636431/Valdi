@@ -587,6 +587,60 @@
     return image;
 }
 
+- (void)testInvokeWithJSRuntimeProvider
+{
+    XCTestExpectation *expectation = [self expectationWithDescription:@"invokeWithJSRuntimeProvider completes"];
+    
+    // Use getRuntimeUsingBatch:NO so we're not inside executeMainThreadBatch. Otherwise the runtime
+    // may run the dispatched block synchronously on the main thread (ScheduleTypeDefault), and with
+    // async_strict_mode the resolution (functionWithJSRuntime:) would assert for being on main thread.
+    [self getRuntimeUsingBatch:NO withBlock:^(id<SCValdiRuntimeProtocol> runtime) {
+        // Test the new invokeWithJSRuntimeProvider method
+        [SCCValdiTestMakeTestObject invokeWithJSRuntimeProvider:^id<SCValdiJSRuntime> {
+            return [runtime jsRuntime];
+        } completionHandler:^(id<SCCValdiTestITestObject> testObject) {
+            XCTAssertNotNil(testObject, @"Test object should not be nil");
+            
+            // Test that the object works and returns correct values
+            double result1 = [testObject addWithValue:10.0];
+            XCTAssertEqual(result1, 10.0, @"First add should return 10");
+            
+            double result2 = [testObject addWithValue:32.0];
+            XCTAssertEqual(result2, 42.0, @"Second add should return 42 (10 + 32)");
+            
+            [expectation fulfill];
+        }];
+    }];
+    
+    [self waitForExpectations:@[expectation] timeout:5.0];
+}
+
+- (void)testResolvingExportedFunctionOnMainThreadTriggersAssertionFailure
+{
+    // valdi_test has async_strict_mode enabled. Resolving (functionWithJSRuntime:) from the main thread
+    // must trigger an assertion (to avoid ANRs). NSAssert raises NSInternalInconsistencyException.
+    XCTestExpectation *expectation = [self expectationWithDescription:@"resolution from main thread triggers assertion"];
+    __block id<SCValdiRuntimeProtocol> capturedRuntime = nil;
+
+    [self getRuntimeWithBlock:^(id<SCValdiRuntimeProtocol> runtime) {
+        capturedRuntime = runtime;
+    }];
+
+    XCTAssertNotNil(capturedRuntime);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @try {
+            (void)[SCCValdiTestMakeTestObject functionWithJSRuntime:[capturedRuntime jsRuntime]];
+            XCTFail(@"Expected resolution from main thread to trigger an assertion (NSInternalInconsistencyException)");
+        } @catch (NSException *exception) {
+            XCTAssertTrue([exception.name isEqualToString:NSInternalInconsistencyException],
+                         @"Expected NSInternalInconsistencyException, got %@", exception.name);
+            [expectation fulfill];
+        }
+    });
+
+    [self waitForExpectations:@[expectation] timeout:5.0];
+}
+
 @end
 
 #pragma clang diagnostic pop

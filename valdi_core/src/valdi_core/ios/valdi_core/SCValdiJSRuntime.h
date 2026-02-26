@@ -50,7 +50,7 @@ generated code to call functions defined in your Valdi modules.
  *                  references. Callers should provide a meaningful name (e.g., class name
  *                  or feature name) to make error messages actionable.
  */
-- (id<SCValdiJSRuntime>)createScopedJSRuntimeWithScopeName:(NSString *)scopeName;
+- (id<SCValdiJSRuntime>)createScopedJSRuntimeWithScopeName:(NSString*)scopeName;
 
 /**
  * Create a new scoped JSRuntime with an empty scope name.
