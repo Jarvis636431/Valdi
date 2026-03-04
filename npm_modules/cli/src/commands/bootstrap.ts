@@ -262,6 +262,14 @@ function initializeConfigFiles(
     copyBootstrapFiles(cursorSourcePath, cursorDestPath, replacements);
   }
 
+  // Copy .claude skills directory (if it exists)
+  const claudeSourcePath = path.join(META_DIR_PATH, '.claude');
+  if (fileExists(claudeSourcePath)) {
+    console.log(wrapInColor('Creating Claude Code skills...', ANSI_COLORS.YELLOW_COLOR));
+    const claudeDestPath = path.join(process.cwd(), '.claude');
+    copyBootstrapFiles(claudeSourcePath, claudeDestPath, replacements);
+  }
+
   // Setup hello world application
   console.log(wrapInColor(`Initializing ${template.name} application...`, ANSI_COLORS.YELLOW_COLOR));
   const sourcePath = path.join(BOOTSTRAP_DIR_PATH, 'apps', template.path);
