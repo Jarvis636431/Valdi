@@ -10,6 +10,7 @@ Cursor automatically loads rules from this directory based on the files you're w
 - Working in `/apps/` or `/src/valdi_modules/` → `typescript-tsx.md` rules apply
 - Working in `/valdi/`, `/valdi_core/`, `/snap_drawing/` → `cpp-runtime.md` rules apply
 - Working in `/bzl/` → `bazel.md` rules apply
+- Working on polyglot modules with `android/`, `ios/`, `web/` dirs → `polyglot-module.md`, `custom-view.md`, `web-polyglot.md` rules apply
 
 ## Available Rules
 
@@ -22,6 +23,9 @@ Cursor automatically loads rules from this directory based on the files you're w
 | `ios.md` | `/valdi/**/ios/**/*.{m,mm,h}` | Objective-C/C++ iOS runtime patterns |
 | `bazel.md` | `**/BUILD.bazel`, `/bzl/**/*.bzl` | Bazel build system conventions |
 | `testing.md` | `**/test/**/*.ts`, `**/*.spec.ts` | Testing framework and patterns |
+| `polyglot-module.md` | `**/BUILD.bazel` with platform dirs | Polyglot module structure, BUILD patterns, platform deps |
+| `custom-view.md` | `**/*.tsx` using `<custom-view>` | `<custom-view>` element, class attributes, platform resolution |
+| `web-polyglot.md` | `**/web/**/*.ts` in modules | Web polyglot entry convention, `webPolyglotViews` export |
 
 ## Rule Priority
 

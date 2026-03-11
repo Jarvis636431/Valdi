@@ -33,6 +33,9 @@ Cursor automatically loads additional rules based on where you're working:
 | iOS (Objective-C) | `.cursor/rules/ios.md` |
 | Bazel files | `.cursor/rules/bazel.md` |
 | Tests | `.cursor/rules/testing.md` |
+| Polyglot modules | `.cursor/rules/polyglot-module.md` |
+| `<custom-view>` element | `.cursor/rules/custom-view.md` |
+| Web polyglot entries | `.cursor/rules/web-polyglot.md` |
 
 **→ Check `.cursor/rules/README.md` for the full list**
 
