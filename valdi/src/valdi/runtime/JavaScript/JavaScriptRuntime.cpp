@@ -882,25 +882,26 @@ JSValueRef JavaScriptRuntime::runtimeSubmitRenderRequest(JSFunctionNativeCallCon
     auto callback = callContext.getParameterAsFunction(1);
     CHECK_CALL_CONTEXT(callContext);
 
-    // When a JS callback (eg. a promise then()) runs under a dispatch whose owning
-    // context has been destroyed (eg. dismissed modal component), Context::currentRoot
-    // still points to that destroyed context.
+    // JS code can execute under a context that has already been destroyed (eg. a
+    // callback firing after a modal is dismissed or a component is torn down).
+    // Native function bridges created in that state capture the destroyed context,
+    // causing all subsequent calls through those bridges to be silently dropped.
+    // This typically manifests as unresponsive UI (tap, dismiss, etc. stop working).
     //
-    // Any setState/onRender triggered from that JS callback will serialize function
-    // attributes (onTap, etc.) into the render request, and the JS-to-native bridge creation
-    // here captures Context::currentRoot (the destroyed context) as the bridge's owner.
+    // The destroyed context may be either the root (Context::currentRoot()) or a
+    // leaf with a living root (Context::current() is destroyed, but currentRoot()
+    // is alive).
     //
-    // Bridges bound to a destroyed context drop all calls, commonly manifesting as UI
-    // components that "reject tap input" because OnTap etc won't work with destroyed contexts.
-    //
-    // Fix: Before deserializing, check for a destroyed root and temporarily override
-    // Context::current with the render request's target tree context (which is valid).
-    // This ensures bridges are bound to the correct, living context.
+    // Fix: if the current context is destroyed, temporarily override it with the
+    // render request's owning component context (treeId), which is still alive.
     //
     // Gated by COF VALDI_ENABLE_RENDER_REQUEST_CONTEXT_FIX (default: on)
     std::unique_ptr<ContextEntry> contextOverride;
+    auto* currentCtx = Context::current();
     auto* currentRoot = Context::currentRoot();
-    if (currentRoot != nullptr && currentRoot->isDestroyed() && Context::isDestroyedContextFixEnabled()) {
+    bool isCurrentContextDestroyed =
+        (currentCtx != nullptr && currentCtx->isDestroyed()) || (currentRoot != nullptr && currentRoot->isDestroyed());
+    if (isCurrentContextDestroyed && Context::isDestroyedContextFixEnabled()) {
         auto& jsContext = callContext.getContext();
         auto treeIdValue = jsContext.getObjectProperty(rawRequest, std::string_view("treeId"), exceptionTracker);
         CHECK_CALL_CONTEXT(callContext);
@@ -909,14 +910,16 @@ JSValueRef JavaScriptRuntime::runtimeSubmitRenderRequest(JSFunctionNativeCallCon
         auto treeContext = _contextManager.getContext(treeId);
         if (treeContext != nullptr && !treeContext->isDestroyed()) {
             VALDI_INFO(*_logger,
-                       "Render request context fix: overriding destroyed currentRoot={} with treeCtx={}",
-                       currentRoot->getContextId(),
+                       "Render request context fix: overriding destroyed context (current={}, root={}) with treeCtx={}",
+                       currentCtx != nullptr ? static_cast<int>(currentCtx->getContextId()) : -1,
+                       currentRoot != nullptr ? static_cast<int>(currentRoot->getContextId()) : -1,
                        treeId);
             contextOverride = std::make_unique<ContextEntry>(treeContext);
         } else {
             VALDI_WARN(*_logger,
-                       "Render request context fix: destroyed currentRoot={} but tree context {} is {}",
-                       currentRoot->getContextId(),
+                       "Render request context fix: destroyed context (current={}, root={}) but tree context {} is {}",
+                       currentCtx != nullptr ? static_cast<int>(currentCtx->getContextId()) : -1,
+                       currentRoot != nullptr ? static_cast<int>(currentRoot->getContextId()) : -1,
                        treeId,
                        treeContext == nullptr ? "null" : "also destroyed");
         }
