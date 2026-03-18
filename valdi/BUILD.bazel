@@ -498,6 +498,7 @@ kt_android_library(
 
 kt_jvm_test(
     name = "test_java",
+    size = "small",
     srcs = glob([
         "test/java/**/*.kt",
     ]),
@@ -509,13 +510,19 @@ kt_jvm_test(
         "@android_mvn//:org_junit_jupiter_junit_jupiter_engine",
         "@android_mvn//:org_junit_platform_junit_platform_launcher",
         "@android_mvn//:org_junit_platform_junit_platform_reporting",
+        "@android_mvn//:org_junit_vintage_junit_vintage_engine",
     ],
     deps = [
         ":valdi_java",
         "//src/valdi_modules/src/valdi/valdi_test:valdi_test_kt",
+        "@android_mvn//:androidx_test_core",
+        "@android_mvn//:junit_junit",
         "@android_mvn//:org_junit_jupiter_junit_jupiter_api",
         "@android_mvn//:org_junit_jupiter_junit_jupiter_params",
         "@android_mvn//:org_junit_platform_junit_platform_console",
+        "@android_mvn//:org_robolectric_android_all",
+        "@android_mvn//:org_robolectric_annotations",
+        "@android_mvn//:org_robolectric_robolectric",
     ],
 )
 
