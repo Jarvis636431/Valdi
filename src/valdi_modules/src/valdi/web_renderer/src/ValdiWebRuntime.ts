@@ -132,10 +132,8 @@ class Runtime {
   }
 
   getCurrentPlatform() {
-    // 1 = Android
-    // 2 = iOS
-    // 3 = web 
-    return 3;
+    // 1 = Android, 2 = iOS, 3 = MacOS, 4 = Web
+    return 4;
   }
 
   submitRawRenderRequest(renderRequest: any) {

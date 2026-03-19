@@ -271,8 +271,8 @@ class JSXModule implements IDaemonClientManagerListener, RendererFactory {
         // webClass is left in attributes so WebValdiCustomView receives it via changeAttribute
       }
 
-      // Platform 3 = web: use 'custom-view' so the web renderer creates WebValdiCustomView
-      if (this.currentPlatform === 3) {
+      // 1 = Android, 2 = iOS, 3 = MacOS, 4 = Web
+      if (this.currentPlatform === 4) {
         return new NodePrototype(className, 'custom-view', attributes);
       }
       if (this.currentPlatform === 2) {
@@ -282,7 +282,7 @@ class JSXModule implements IDaemonClientManagerListener, RendererFactory {
           return new DeferredNodePrototype(className, attributes);
         }
       }
-      if (this.currentPlatform === 4) {
+      if (this.currentPlatform === 3) {
         if (macosClass) {
           return new NodePrototype(className, macosClass, attributes);
         } else {

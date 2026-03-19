@@ -32,8 +32,8 @@ function normalizePath(pathEntries: string[]): string[] {
         // Keep the '..' we went outside our root
         out.push(pathEntry);
       }
-    } else if (pathEntry === '.' && runtime.getCurrentPlatform() != 3)  {
-      // Nothing to do
+    } else if (pathEntry === '.' && runtime.getCurrentPlatform() !== 4) {
+      // Omit '.' from the path on Android (1), iOS (2), MacOS (3). On Web (4) keep '.' in the path.
       continue;
     } else {
       out.push(pathEntry);
