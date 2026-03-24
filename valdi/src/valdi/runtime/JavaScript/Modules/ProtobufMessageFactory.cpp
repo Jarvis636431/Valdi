@@ -22,6 +22,10 @@ bool ProtobufMessageFactory::load(const BytesView& data, ExceptionTracker& excep
     return _descriptorDatabase->addFileDescriptorSet(data, exceptionTracker);
 }
 
+std::unique_lock<std::recursive_mutex> ProtobufMessageFactory::lock() const {
+    return std::unique_lock<std::recursive_mutex>(_mutex);
+}
+
 bool ProtobufMessageFactory::parseAndLoad(const std::string& filename,
                                           std::string_view protoFileContent,
                                           ExceptionTracker& exceptionTracker) {
@@ -45,6 +49,11 @@ const google::protobuf::Descriptor* ProtobufMessageFactory::getDescriptorAtIndex
         exceptionTracker.onError("Invalid descriptor index");
         return nullptr;
     }
+
+    // Acquire the lock to protect the lazy pool lookup and descriptor cache write.
+    // _mutex is recursive so callers holding the lock externally (e.g. for atomicity
+    // across multiple factory calls) do not deadlock.
+    auto lock = std::unique_lock<std::recursive_mutex>(_mutex);
 
     const auto* descriptor = _descriptorDatabase->getDescriptorOfSymbolAtIndex(index);
     if (descriptor == nullptr) {

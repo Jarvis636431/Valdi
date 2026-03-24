@@ -864,6 +864,9 @@ JSValueRef ProtobufModule::getFieldsForMessageDescriptor(JSFunctionNativeCallCon
     auto descriptorIndex = getIndex(callContext, 1);
     CHECK_CALL_CONTEXT(callContext);
 
+    // Hold the factory lock for the entire sequence of factory calls so they complete atomically.
+    auto factoryLock = messageFactory->lock();
+
     const auto* descriptor = messageFactory->getDescriptorAtIndex(descriptorIndex, callContext.getExceptionTracker());
     CHECK_CALL_CONTEXT(callContext);
 
