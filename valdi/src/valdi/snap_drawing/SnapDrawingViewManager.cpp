@@ -84,6 +84,9 @@ public:
         if (layer == nullptr) {
             return Valdi::Void();
         }
+        if (_sourceDelegate == nullptr) {
+            return Valdi::Void();
+        }
         auto result = _sourceDelegate->onApply(
             viewTransactionScope.withViewManager(_hostViewManager), viewNode, layer->getView(), name, value, nullptr);
 
@@ -99,6 +102,9 @@ public:
                  const Valdi::Ref<Valdi::Animator>& /*animator*/) override {
         auto layer = getBridgeLayer(view);
         if (layer == nullptr) {
+            return;
+        }
+        if (_sourceDelegate == nullptr) {
             return;
         }
         _sourceDelegate->onReset(
