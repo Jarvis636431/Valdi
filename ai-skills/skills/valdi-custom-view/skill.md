@@ -26,12 +26,12 @@
 | `macosClass` | macOS | `NSClassFromString()`; must be linked via `macos_deps` |
 | `webClass` | Web | Looked up in `WebViewClassRegistry`; registered via `webPolyglotViews` export |
 
-## Platform Discovery
+## Platform Resolution
 
 - **Android**: The view class needs a single-arg `(Context)` constructor. An `@RegisterAttributesBinder`-annotated binder is discovered from assets at runtime.
-- **iOS**: The ObjC class must be an `NSView`/`UIView` subclass linked into the binary.
-- **macOS**: Same as iOS but with `NSView` subclass.
-- **Web**: The `webClass` name is matched against the `WebViewClassRegistry`. Register by exporting `webPolyglotViews` from a web polyglot entry file (see `web-polyglot.md` rule).
+- **iOS**: The ObjC class must be a `UIView` subclass linked into the binary via `ios_deps`.
+- **macOS**: Falls through to `iosClass` when `macosClass` is not specified — both in TypeScript (`JSXBootstrap.ts`) and C++ (`ViewNode.cpp`). Only specify `macosClass` when the macOS view is different from iOS.
+- **Web**: The `webClass` name is matched against the `WebViewClassRegistry`. Register by exporting `webPolyglotViews` from a typed TypeScript web polyglot entry file compiled via `ts_project` (see `valdi-polyglot-module` skill). Factories return an `AttributeHandler` with `changeAttribute(name, value)` to receive attribute updates.
 
 ## viewFactory Pattern
 
@@ -60,3 +60,5 @@ class MyComponent extends Component<MyViewModel> {
 - Using `<custom-view>` without checking the platform — wrap in `Device.isAndroid()` / `Device.isIOS()` etc. if not all platforms are supported
 - Forgetting to link native implementations — the class name string alone isn't enough; the native code must be compiled and linked via platform `_deps` in BUILD.bazel
 - Wrong package name in `androidClass` — must match the Kotlin/Java package exactly
+- Specifying `macosClass` when it's the same as `iosClass` — omit it and let the fallthrough handle it
+- Using a `filegroup` for `web_deps` — always use `ts_project` with `transpiler = "tsc"`

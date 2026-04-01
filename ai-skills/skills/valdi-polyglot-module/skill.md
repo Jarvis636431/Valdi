@@ -22,9 +22,21 @@ my_module/
 ## BUILD.bazel Pattern
 
 ```python
+load("@aspect_rules_ts//ts:defs.bzl", "ts_project")
+
+# web_deps MUST be a ts_project — never use filegroup for web code.
 ts_project(
     name = "my_module_web",
-    srcs = glob(["web/**/*.ts", "web/**/*.d.ts"]),
+    srcs = glob(
+        [
+            "web/**/*.ts",
+            "src/**/*.d.ts",       # include if web code imports module type declarations
+        ],
+        exclude = ["web/**/*.d.ts"],  # exclude to avoid TS5055 output collision with composite
+    ),
+    allow_js = True,
+    composite = True,
+    transpiler = "tsc",            # required — aspect_rules_ts does not default it
     tsconfig = "web/tsconfig.json",
     visibility = ["//visibility:public"],
 )
@@ -45,24 +57,50 @@ valdi_module(
 
 ## Web Polyglot Entry Pattern
 
-Web entry files export view factories that are auto-registered with the `WebViewClassRegistry` at bundle time. Export a `webPolyglotViews` record mapping class names to factory functions:
+Web entry files export view factories that are auto-registered with the `WebViewClassRegistry` at bundle time. Use typed TypeScript with an `AttributeHandler` interface:
 
 ```typescript
-export const webPolyglotViews: Record<string, (container: HTMLElement) => void> = {
+interface AttributeHandler {
+  changeAttribute(name: string, value: unknown): void;
+}
+
+type ViewFactory = (container: HTMLElement) => AttributeHandler;
+
+function createMyViewFactory(): ViewFactory {
+  return (container: HTMLElement): AttributeHandler => {
+    const element = document.createElement('div');
+    container.appendChild(element);
+
+    return {
+      changeAttribute(name: string, value: unknown): void {
+        if (name === 'myAttribute' && typeof value === 'number') {
+          element.textContent = String(value);
+        }
+      },
+    };
+  };
+}
+
+// Keys must match the webClass attribute in <custom-view webClass="MyCustomViewClass">
+export const webPolyglotViews: Record<string, ViewFactory> = {
   MyCustomViewClass: createMyViewFactory(),
 };
 ```
 
-Each key must match the `webClass` attribute used in `<custom-view webClass="MyCustomViewClass">`.
+### Web `tsconfig.json`
 
-A factory receives an `HTMLElement` container and populates it with DOM content:
+The `web/tsconfig.json` must be standalone — do not extend the module-level tsconfig (it has Valdi path mappings that don't apply to web builds):
 
-```typescript
-function createMyViewFactory(): (container: HTMLElement) => void {
-  return (container: HTMLElement) => {
-    const element = document.createElement('div');
-    container.appendChild(element);
-  };
+```json
+{
+  "compilerOptions": {
+    "target": "ES2016",
+    "module": "commonjs",
+    "strict": true,
+    "composite": true,
+    "allowJs": true,
+    "lib": ["dom", "ES2019"]
+  }
 }
 ```
 
@@ -70,7 +108,8 @@ function createMyViewFactory(): (container: HTMLElement) => void {
 - Compiled by `tsc` via `ts_project`, **not** the Valdi compiler
 - Do **NOT** use Valdi imports (`valdi_core/`, `valdi_tsx/`) — web files run in the browser, not the Valdi runtime
 - Do **NOT** manually call `globalThis.moduleLoader.resolveRequire()` — build system handles registration
-- The `tsconfig.json` in `web/` should target `DOM` + `ES2020` with `module: "commonjs"`
+- The `web/tsconfig.json` must be standalone with `lib: ["dom", "ES2019"]` and `module: "commonjs"`
+- Always use `transpiler = "tsc"` in the `ts_project` rule — aspect_rules_ts requires explicit transpiler selection
 
 ## Canonical Example
 

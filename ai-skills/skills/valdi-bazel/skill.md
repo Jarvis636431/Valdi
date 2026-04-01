@@ -39,6 +39,8 @@ bazel clean
 ### Common Targets
 
 ```python
+load("@aspect_rules_ts//ts:defs.bzl", "ts_project")
+
 # Valdi application
 valdi_application(
     name = "my_app",
@@ -48,10 +50,27 @@ valdi_application(
     deps = ["//apps/my_app/src/valdi/my_app"],
 )
 
-# Valdi module
+# Web polyglot views — MUST be ts_project, never filegroup
+ts_project(
+    name = "my_module_web",
+    srcs = glob(
+        ["web/**/*.ts", "src/**/*.d.ts"],
+        exclude = ["web/**/*.d.ts"],
+    ),
+    allow_js = True,
+    composite = True,
+    transpiler = "tsc",
+    tsconfig = "web/tsconfig.json",
+)
+
+# Valdi module with platform deps
 valdi_module(
     name = "my_module",
-    srcs = glob(["src/**/*.ts", "src/**/*.tsx"]),
+    srcs = glob(["src/**/*.ts", "src/**/*.tsx"]) + ["tsconfig.json"],
+    ios_deps = [":my_ios_views"],          # objc_library
+    macos_deps = [":my_macos_views"],      # objc_library (or omit to share ios_deps)
+    android_deps = [":my_android_views"],  # valdi_android_library
+    web_deps = [":my_module_web"],         # ts_project (never filegroup)
     deps = [
         "//src/valdi_modules/src/valdi/valdi_core",
     ],
