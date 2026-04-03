@@ -17,7 +17,9 @@ const rule = createRule({
     messages: {
       incorrectLambda: "Avoid assigning a lambda function directly to the '{{attributeName}}' JSX attribute.",
       incorrectArray:
-        "Avoid assigning an array directly to the '{{attributeName}}' JSX attribute . Consider storing the array as a member of this component.",
+        "Avoid assigning an array directly to the '{{attributeName}}' JSX attribute. Consider storing the array as a member of this component.",
+      incorrectObject:
+        "Avoid assigning an object literal directly to the '{{attributeName}}' JSX attribute. Consider storing the object as a member of this component to avoid re-renders caused by referential inequality.",
     },
     schema: [], // no options
   },
@@ -43,6 +45,15 @@ const rule = createRule({
             context.report({
               node: node.value,
               messageId: 'incorrectArray',
+              data: {
+                attributeName: node.name.name,
+              },
+            });
+            break;
+          case AST_NODE_TYPES.ObjectExpression:
+            context.report({
+              node: node.value,
+              messageId: 'incorrectObject',
               data: {
                 attributeName: node.name.name,
               },

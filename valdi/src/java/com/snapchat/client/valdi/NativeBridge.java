@@ -152,6 +152,8 @@ public class NativeBridge {
 
     public static native void applicationSetConfiguration(long runtimeManagerHandle, float dynamicTypeScale);
 
+    public static native void setPointScale(long runtimeManagerHandle, float pointScale);
+
     public static native void applicationDidResume(long runtimeManagerHandle);
 
     public static native void applicationWillPause(long runtimeManagerHandle);

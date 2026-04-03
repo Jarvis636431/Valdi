@@ -21,8 +21,9 @@ function makeRenderer(
   delegate: IRendererDelegate,
   allowedRootElementTypes?: string[],
   disableProxy?: boolean,
+  useTopDownMoveOrder?: boolean,
 ): Renderer {
-  const renderer = new Renderer('', allowedRootElementTypes, delegate);
+  const renderer = new Renderer('', allowedRootElementTypes, delegate, useTopDownMoveOrder);
 
   // return renderer;
   if (disableProxy) {
@@ -180,6 +181,46 @@ describe('Renderer', () => {
         ],
       },
     ]);
+  });
+
+  it('with useTopDownMoveOrder emits setRootElement first then moves in top-down order', () => {
+    const output = new RendererTestDelegate();
+    const renderer = makeRenderer(output, undefined, true, true);
+
+    const node1 = makeNodeProtoype('layout');
+    const node2 = makeNodeProtoype('view');
+    const node3 = makeNodeProtoype('label');
+
+    renderer.begin();
+    renderer.beginElement(node1);
+    renderer.beginElement(node2);
+    renderer.endElement();
+    renderer.beginElement(node3);
+    renderer.endElement();
+    renderer.endElement();
+    renderer.end();
+
+    expect(output.requests.length).toBe(1);
+    const entries = output.requests[0].entries;
+    const setRootIdx = entries.findIndex(e => e.type === RawRenderRequestEntryType.setRootElement);
+    const moveIndices = entries
+      .map((e, i) => (e.type === RawRenderRequestEntryType.moveElementToParent ? i : -1))
+      .filter(i => i >= 0);
+    // setRootElement must appear before any move (top-down: root first)
+    expect(setRootIdx).toBeGreaterThanOrEqual(0);
+    moveIndices.forEach(moveIdx => expect(moveIdx).toBeGreaterThan(setRootIdx));
+    // For every move (id, parentId, index), the parent must have been "attached" before this move.
+    // Root (id 1) is attached via setRootElement; others via an earlier move.
+    const attachedBefore = new Set<number>();
+    for (const e of entries) {
+      if (e.type === RawRenderRequestEntryType.setRootElement && e.id != null) {
+        attachedBefore.add(e.id);
+      }
+      if (e.type === RawRenderRequestEntryType.moveElementToParent && e.id != null && e.parentId != null) {
+        expect(attachedBefore.has(e.parentId)).toBeTrue();
+        attachedBefore.add(e.id);
+      }
+    }
   });
 
   it('can apply attributes', () => {

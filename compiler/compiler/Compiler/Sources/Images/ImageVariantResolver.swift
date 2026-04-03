@@ -28,7 +28,7 @@ class ImageVariantResolver {
     ]
 
     private static let webVariantSpecs = [
-        ImageVariantSpecs(filenamePattern: "$file.png", scale: 1.0, platform: .web)
+        ImageVariantSpecs(filenamePattern: "$file.png", scale: 3.0, platform: .web)
     ]
 
     private static let svgVariantSpecs = ImageVariantSpecs(filenamePattern: "$file.svg", scale: 1.0, platform: nil)

@@ -255,10 +255,10 @@ class ValdiRuntime(
         }
     }
 
-    override fun createScopedJSRuntime(block: (ValdiScopedJSRuntime) -> Unit) {
+    override fun createScopedJSRuntime(scopeName: String, block: (ValdiScopedJSRuntime) -> Unit) {
         runOnJsThread {
             val jsRuntime = native.getJSRuntime()
-            val scopedRuntime = ValdiJSRuntimeImpl(jsRuntime, this, jsRuntime.createNativeObjectsManager())
+            val scopedRuntime = ValdiJSRuntimeImpl(jsRuntime, this, jsRuntime.createNativeObjectsManager(scopeName))
             block(scopedRuntime)
         }
     }

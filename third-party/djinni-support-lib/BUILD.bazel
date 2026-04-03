@@ -122,6 +122,9 @@ java_library(
     name = "djinni_support_lib_java",
     srcs = glob(["src/djinni/java/**/*.java"]),
     visibility = ["//visibility:public"],
+    deps = [
+        "@android_mvn//:javax_inject_javax_inject",
+    ],
 )
 
 cc_library(
@@ -178,7 +181,7 @@ swift_library(
     visibility = ["//visibility:public"],
     deps = [
         ":djinni_support_lib_swiftxx",
-        "@com_github_apple_swift_protobuf//:SwiftProtobuf",
+        "@com_github_apple_swift_protobuf_client//:SwiftProtobuf",
     ],
 )
 

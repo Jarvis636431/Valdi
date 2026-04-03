@@ -32,8 +32,8 @@ function normalizePath(pathEntries: string[]): string[] {
         // Keep the '..' we went outside our root
         out.push(pathEntry);
       }
-    } else if (pathEntry === '.' && runtime.getCurrentPlatform() != 3)  {
-      // Nothing to do
+    } else if (pathEntry === '.' && runtime.getCurrentPlatform() !== 4) {
+      // Omit '.' from the path on Android (1), iOS (2), MacOS (3). On Web (4) keep '.' in the path.
       continue;
     } else {
       out.push(pathEntry);
@@ -189,6 +189,14 @@ export class ModuleLoader implements IModuleLoader {
   preload(path: string, maxDepth: number): void {
     const resolvedPath = resolveAbsoluteImportFromPath(path);
     this.doPreload(resolvedPath.absolutePath, 0, maxDepth, {});
+  }
+
+  preloadBatch(paths: string[], maxDepth: number): void {
+    const visited: StringSet = {};
+    for (let i = 0; i < paths.length; i++) {
+      const resolvedPath = resolveAbsoluteImportFromPath(paths[i]);
+      this.doPreload(resolvedPath.absolutePath, 0, maxDepth, visited);
+    }
   }
 
   private doPreload(path: string, currentDepth: number, maxDepth: number, visitedModulePaths: StringSet) {

@@ -29,8 +29,11 @@ build:linux --sandbox_writable_path=/var/tmp
 # common cc configuration
 build --cxxopt=-std=c++20
 build --cxxopt=-Wno-ambiguous-reversed-operator
+build --cxxopt=-Wno-gcc-compat
+build --cxxopt=-Wno-nullability-extension
 build --cxxopt=-D_LIBCPP_ENABLE_CXX20_REMOVED_TYPE_TRAITS
 build --host_cxxopt=-std=c++20
+build --host_cxxopt=-Wno-nullability-extension
 
 ## we need to disable this due to a bug in bazel
 ## see https://github.com/bazelbuild/bazel/issues/12381
@@ -51,8 +54,8 @@ build:macos --copt=-fvisibility=hidden
 # java configuration
 ## Disable some java checks for now, djinni generates code that errors out
 build --javacopt=-XepDisableAllChecks
-build --java_runtime_version=11
-build --tool_java_runtime_version=17
+build --java_runtime_version=remotejdk_11
+build --tool_java_runtime_version=remotejdk_17
 
 build --flag_alias=snap_flavor=@snap_platforms//flavors:snap_flavor
 build --snap_flavor=client_development

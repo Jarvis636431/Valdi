@@ -53,12 +53,12 @@ open class ValdiRootView: ValdiView, Disposable {
     var useNewMultiTouchExperience = false
 
     // Implements fixes when using onRotate.
-    // enableMultiTouchFixes must also be enabled for this to work correctly.
     var enableRotateGestureRecognizeV2 = false
 
     // Implements fixes when using onPinch.
-    // enableMultiTouchFixes must also be enabled for this to work correctly.
     var enablePinchGestureRecognizeV2 = false
+
+    var enableV2GestureDetectorReset = false
 
     var disableLeakTracking = false
 
@@ -482,6 +482,19 @@ open class ValdiRootView: ValdiView, Disposable {
         valdiUpdatesCount--
         if (valdiUpdatesCount == 0 && !isLayoutRequested) {
             applyValdiLayout()
+        }
+    }
+    internal fun valdiUpdatesEndedAsync(layoutDidBecomeDirty: Boolean) {
+        valdiUpdatesCount--
+        if (valdiUpdatesCount == 0 && !isLayoutRequested) {
+            // This is called outside of normal update cycle
+            // so we can't directly call applyValdiLayout().
+            // Otherwise we can get java.lang.IllegalStateException
+            // due to calling layout in the middle of RecyclerView’s
+            // layout stage
+            post {
+                requestLayout()
+            }
         }
     }
 

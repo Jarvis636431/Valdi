@@ -66,6 +66,7 @@ class BundleManager {
                                                     disableAnnotationProcessing: false,
                                                     disableDependencyVerification: true,
                                                     disableBazelBuildFileGeneration: true,
+                                                    asyncStrictMode: false,
                                                     webNpmScope: "",
                                                     webVersion: "",
                                                     webPublishConfig: "",
@@ -218,6 +219,7 @@ class BundleManager {
         let disableDependencyVerification = config["disable_dependency_verification"]?.bool ?? false
         let disableCodeCoverage = config["disable_code_coverage"]?.bool ?? false
         let disableBazelBuildFileGeneration = config["bazel_build_file_generation_disabled"]?.bool ?? false
+        let asyncStrictMode = config["async_strict_mode"]?.bool ?? false
 
         let compilationModeConfig = try config["compilation_mode"].map { try CompilationModeConfig.parse(from: $0) } ?? CompilationModeConfig.forJsBytecode()
 
@@ -240,12 +242,10 @@ class BundleManager {
         let parsedIosOutputTarget = try Self.parseOutputTarget(mapping: iosConfig)
         let parsedAndroidOutputTarget = try Self.parseOutputTarget(mapping: androidConfig)
         let parsedWebOutputTarget = try Self.parseOutputTarget(mapping: webConfig)
-        let parsedCppOutputTarget = try Self.parseOutputTarget(mapping: cppConfig)
 
         let iosOutputTarget: ModuleOutputTarget?
         let androidOutputTarget: ModuleOutputTarget?
         let webOutputTarget: ModuleOutputTarget?
-        let cppOutputTarget = parsedCppOutputTarget
         switch (parsedCommonOutputTarget, parsedIosOutputTarget, parsedAndroidOutputTarget) {
         case (.none, .none, .none):
             throw CompilerError("No output_target in the \(bundleName) module.yaml. Supported values are 'debug' and 'release'")
@@ -338,6 +338,7 @@ class BundleManager {
                                                         disableAnnotationProcessing: disableAnnotationProcessing,
                                                         disableDependencyVerification: disableDependencyVerification,
                                                         disableBazelBuildFileGeneration: disableBazelBuildFileGeneration,
+                                                        asyncStrictMode: asyncStrictMode,
                                                         webNpmScope: webNpmScope,
                                                         webVersion: webVersion,
                                                         webPublishConfig: webPublishConfig,
@@ -357,7 +358,7 @@ class BundleManager {
                                                         iosGeneratedContextFactories: iosGeneratedContextFactories,
                                                         androidOutputTarget: androidOutputTarget,
                                                         webOutputTarget: webOutputTarget,
-                                                        cppOutputTarget: cppOutputTarget,
+                                                        cppOutputTarget: .releaseReady,
                                                         downloadableAssets: downloadableAssets,
                                                         downloadableSources: downloadableSources,
                                                         inclusionConfig: inclusionConfig,

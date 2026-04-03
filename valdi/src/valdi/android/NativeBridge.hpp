@@ -112,6 +112,7 @@ public:
     static void applicationSetConfiguration(fbjni::alias_ref<fbjni::JClass> clazz,
                                             jlong runtimeManagerHandle,
                                             jfloat dynamicTypeScale);
+    static void setPointScale(fbjni::alias_ref<fbjni::JClass> clazz, jlong runtimeManagerHandle, jfloat pointScale);
     static void applicationDidResume(fbjni::alias_ref<fbjni::JClass> clazz, jlong runtimeManagerHandle);
     static void applicationIsInLowMemory(fbjni::alias_ref<fbjni::JClass> clazz, jlong runtimeManagerHandle);
     static void applicationWillPause(fbjni::alias_ref<fbjni::JClass> clazz, jlong runtimeManagerHandle);

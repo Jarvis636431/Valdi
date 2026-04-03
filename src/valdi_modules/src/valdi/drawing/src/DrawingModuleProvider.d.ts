@@ -1,3 +1,4 @@
+import { AttributedTextNative } from './AttributedTextNative';
 
 /**
  * @ExportModel({ios: 'SCValdiDrawingFontSpecs', android: 'com.snap.valdi.modules.drawing.FontSpecs'})
@@ -40,6 +41,12 @@ export const enum FontStyle {
  */
 export interface Font {
   measureText(text: string, maxWidth?: number, maxHeight?: number, maxLines?: number): Size;
+  measureAttributedText(
+    attributedText: AttributedTextNative,
+    maxWidth?: number,
+    maxHeight?: number,
+    maxLines?: number,
+  ): Size;
 }
 
 /**
