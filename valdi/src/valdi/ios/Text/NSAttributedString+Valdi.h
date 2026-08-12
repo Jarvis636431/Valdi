@@ -13,18 +13,7 @@
 @class SCValdiFont;
 @protocol SCValdiFontManagerProtocol;
 
-extern NSString* const kSCValdiAttributedStringKeyOnTap;
-extern NSString* const kSCValdiAttributedStringKeyOnLayout;
-extern NSString* const kSCValdiOuterOutlineColorAttribute;
-extern NSString* const kSCValdiOuterOutlineWidthAttribute;
-
 @interface NSAttributedString (Valdi)
-
-+ (NSAttributedString*)attributedStringWithValdiText:(id)text
-                                          attributes:(NSDictionary<NSAttributedStringKey, id>*)attributes
-                                       isRightToLeft:(BOOL)isRightToLeft
-                                         fontManager:(id<SCValdiFontManagerProtocol>)fontManager
-                                     traitCollection:(UITraitCollection*)traitCollection;
 
 + (SCValdiFontAttributes*)fontAttributesWithCompositeValue:(NSArray<id>*)compositeValue;
 + (SCValdiFontAttributes*)fontAttributesWithCompositeValueGrowable:(NSArray<id>*)compositeValue;
@@ -32,6 +21,7 @@ extern NSString* const kSCValdiOuterOutlineWidthAttribute;
                                            color:(NSNumber*)color
                                        textAlign:(NSString*)textAlign
                                       lineHeight:(NSNumber*)lineHeight
+                              lineHeightAbsolute:(NSNumber*)lineHeightAbsolute
                                   textDecoration:(NSString*)textDecoration
                                    letterSpacing:(NSNumber*)letterSpacing
                                    numberOfLines:(NSNumber*)numberOfLines
@@ -52,6 +42,9 @@ extern NSString* const kSCValdiOuterOutlineWidthAttribute;
  */
 + (NSAttributedString*)trimAttributedString:(NSAttributedString*)attributedString
                              characterLimit:(NSInteger)characterLimit;
+
++ (NSAttributedString*)valdi_attributedStringWithAttachment:(NSTextAttachment*)attachment
+                                                 attributes:(NSMutableDictionary<NSAttributedStringKey, id>*)attributes;
 
 @end
 

@@ -440,11 +440,16 @@ jsx.registerNativeElement('label', 'SCValdiLabel', 'com.snap.valdi.views.ValdiTe
 jsx.registerNativeElement('scroll', 'SCValdiScrollView', 'com.snap.valdi.views.ValdiScrollView');
 jsx.registerNativeElement('image', 'SCValdiImageView', 'com.snap.valdi.views.ValdiImageView');
 jsx.registerNativeElement('video', 'SCValdiVideoView', 'com.snap.valdi.views.ValdiVideoView');
+jsx.registerNativeElement('webview', 'SCValdiWebView', 'com.snap.valdi.modules.webview.ValdiWebView');
 jsx.registerNativeElement('button', 'UIButton', 'android.widget.Button');
 jsx.registerNativeElement('spinner', 'SCValdiSpinnerView', 'com.snap.valdi.views.ValdiSpinnerView');
 jsx.registerNativeElement('blur', 'SCValdiBlurView', 'com.snap.valdi.views.ValdiView');
+// Liquid Glass (iOS 26+). No Android equivalent, so it falls through to a plain
+// ValdiView on Android, just like `blur` above.
+jsx.registerNativeElement('glass', 'SCValdiGlassView', 'com.snap.valdi.views.ValdiView');
 jsx.registerNativeElement('textfield', 'SCValdiTextField', 'com.snap.valdi.views.ValdiEditText');
 jsx.registerNativeElement('textview', 'SCValdiTextView', 'com.snap.valdi.views.ValdiEditTextMultiline');
+jsx.registerNativeElement('textanimationgroup', 'SCValdiTextAnimationGroup', 'com.snap.valdi.views.ValdiTextAnimationGroup');
 jsx.registerNativeElement('shape', 'SCValdiShapeView', 'com.snap.valdi.views.ShapeView');
 jsx.registerNativeElement(
   'animatedimage',

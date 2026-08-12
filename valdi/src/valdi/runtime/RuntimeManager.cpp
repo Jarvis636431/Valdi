@@ -13,6 +13,7 @@
 #include "valdi/runtime/Resources/BytesAssetLoader.hpp"
 #include "valdi/runtime/ValdiBuildFlags.hpp"
 #include "valdi/runtime/ValdiRuntimeTweaks.hpp"
+#include <yoga/Yoga.h>
 
 #include "valdi/runtime/Resources/AssetLoaderManager.hpp"
 
@@ -33,6 +34,7 @@
 #include "valdi_core/cpp/Utils/LoggerUtils.hpp"
 
 #include <algorithm>
+#include <memory>
 
 namespace Valdi {
 
@@ -57,6 +59,7 @@ Shared<DebuggerService> createDebuggerService(bool enableDebuggerService,
                 break;
             case PlatformTypeMacOS:
             case PlatformTypeWeb:
+            case PlatformTypeLinux:
                 platform = snap::valdi_core::Platform::Ios;
                 break;
         }
@@ -195,7 +198,6 @@ SharedRuntime RuntimeManager::createRuntime(const Shared<IResourceLoader>& resou
     std::vector<std::shared_ptr<::snap::valdi_core::ModuleFactory>> moduleFactories;
     std::vector<RegisteredTypeConverter> typeConverters;
     std::vector<Ref<IRuntimeManagerListener>> listeners;
-    Ref<ValdiRuntimeTweaks> runtimeTweaks;
     Ref<AttributionResolver> attributionResolver;
     Ref<Metrics> metrics;
 
@@ -209,13 +211,22 @@ SharedRuntime RuntimeManager::createRuntime(const Shared<IResourceLoader>& resou
         moduleFactories = _registeredModuleFactories;
         typeConverters = _registeredTypeConverters;
         listeners = _listeners;
-        runtimeTweaks = _runtimeTweaks;
         attributionResolver = _attributionResolver;
         metrics = _metrics;
         autoRenderDisabled = _loadOperationsCount > 0;
+        // Apply state that has a peer RuntimeManager::set*() iterating runtimes
+        // while still holding _mutex. If we read into a local and applied after
+        // releasing the lock, a concurrent setter could interleave: it would
+        // see the just-added runtime in its snapshot and apply the new value
+        // to it, and we would then overwrite with our stale local copy.
+        //
+        // Runtime::set*() below only takes the ResourceManager's mutex (a
+        // different one), so there is no lock-inversion risk. This mirrors how
+        // the peer setters (e.g. setMmapCacheDirectory, setTweakValueProvider)
+        // already operate on runtimes they iterate.
+        runtime->setMmapCacheDirectory(_mmapCacheDirectory);
+        runtime->setRuntimeTweaks(_runtimeTweaks);
     }
-
-    runtime->setRuntimeTweaks(runtimeTweaks);
     runtime->setAutoRenderDisabled(autoRenderDisabled);
     runtime->setMetrics(metrics);
     runtime->getContextManager().setAttributionResolver(attributionResolver);
@@ -257,6 +268,11 @@ Ref<ViewManagerContext> RuntimeManager::createViewManagerContext(
         *_logger);
 
     _viewManagerContexts.emplace_back(viewManagerContext);
+
+    // Seed the kill switch from the current tweaks so contexts created after the provider is set pick
+    // it up; the setTweakValueProvider loop handles contexts created before it arrives.
+    viewManagerContext->setApplyManagedChildFramePadding(
+        _runtimeTweaks != nullptr ? _runtimeTweaks->applyManagedChildFramePadding() : true);
 
     return viewManagerContext;
 }
@@ -569,11 +585,19 @@ void RuntimeManager::setTweakValueProvider(const Shared<ITweakValueProvider>& tw
     }
     _anrDetector->setNudgeEnabled(runtimeTweaks != nullptr ? runtimeTweaks->shouldNudgeJSThread() : false);
 
+    YGConfigSetExperimentalFeatureEnabled(_yogaConfig.get(),
+                                          YGExperimentalFeatureFixFlexBasisFitContent,
+                                          runtimeTweaks != nullptr ? runtimeTweaks->enableFixFlexBasisFitContent() :
+                                                                     false);
+
     auto disableAnimationRemoveOnCompleteIos =
         runtimeTweaks != nullptr ? runtimeTweaks->disableAnimationRemoveOnCompleteIos() : false;
+    auto applyManagedChildFramePadding =
+        runtimeTweaks != nullptr ? runtimeTweaks->applyManagedChildFramePadding() : true;
     for (const auto& viewManagerContext : _viewManagerContexts) {
         viewManagerContext->getViewManager().setDisableAnimationRemoveOnCompleteIos(
             disableAnimationRemoveOnCompleteIos);
+        viewManagerContext->setApplyManagedChildFramePadding(applyManagedChildFramePadding);
     }
 
     for (const auto& runtime : runtimes) {
@@ -721,6 +745,40 @@ JavaScriptContextMemoryStatistics RuntimeManager::dumpMemoryStatistics() {
     return stats;
 }
 
+void RuntimeManager::dumpMemoryStatisticsAsync(Function<void(JavaScriptContextMemoryStatistics)> completion) {
+    const auto runtimes = this->getAllRuntimes();
+    if (runtimes.empty()) {
+        completion(JavaScriptContextMemoryStatistics{});
+        return;
+    }
+
+    // Each runtime reports its stats asynchronously on its own JS thread; accumulate lock-free
+    // and invoke the caller's completion once the final runtime has reported. Using an
+    // acquire-release drop on `remaining` publishes every relaxed accumulation to the last thread.
+    struct AggregationState {
+        std::atomic<size_t> memoryUsageBytes{0};
+        std::atomic<size_t> objectsCount{0};
+        std::atomic<size_t> remaining;
+        Function<void(JavaScriptContextMemoryStatistics)> completion;
+    };
+    auto state = std::make_shared<AggregationState>();
+    state->remaining.store(runtimes.size(), std::memory_order_relaxed);
+    state->completion = std::move(completion);
+
+    for (const auto& runtime : runtimes) {
+        runtime->getJavaScriptRuntime()->dumpMemoryStatisticsAsync([state](JavaScriptContextMemoryStatistics stat) {
+            state->memoryUsageBytes.fetch_add(stat.memoryUsageBytes, std::memory_order_relaxed);
+            state->objectsCount.fetch_add(stat.objectsCount, std::memory_order_relaxed);
+            if (state->remaining.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+                JavaScriptContextMemoryStatistics stats;
+                stats.memoryUsageBytes = state->memoryUsageBytes.load(std::memory_order_relaxed);
+                stats.objectsCount = state->objectsCount.load(std::memory_order_relaxed);
+                state->completion(stats);
+            }
+        });
+    }
+}
+
 void RuntimeManager::emitMetrics(void (Metrics::*emitterFunc)(const MetricsDuration&)) {
     std::shared_ptr<MetricsStopWatch> initStopWatch;
     Ref<Metrics> metrics;
@@ -762,6 +820,14 @@ PlatformType RuntimeManager::getPlatformType() const {
 
 const Ref<JavaScriptANRDetector>& RuntimeManager::getANRDetector() const {
     return _anrDetector;
+}
+
+void RuntimeManager::setMmapCacheDirectory(const Path& path) {
+    std::lock_guard<Mutex> guard(_mutex);
+    _mmapCacheDirectory = path;
+    for (const auto& runtime : getAllRuntimes(guard)) {
+        runtime->setMmapCacheDirectory(path);
+    }
 }
 
 VALDI_CLASS_IMPL(RuntimeManager)

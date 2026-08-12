@@ -1,9 +1,15 @@
 package com.snap.valdi.extensions
 
 import android.graphics.Canvas
+import android.graphics.LinearGradient
 import android.graphics.Matrix
+import android.graphics.Paint
 import android.graphics.Picture
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.graphics.RadialGradient
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.PictureDrawable
 import android.os.Build
@@ -11,6 +17,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewManager
+import com.snap.valdi.attributes.impl.gradients.ValdiGradient
 import com.snap.valdi.attributes.impl.animations.transition.ValdiTransitionInfo
 import com.snap.valdi.context.ValdiContext
 import com.snap.valdi.views.ValdiRootView
@@ -27,8 +34,10 @@ import com.snap.valdi.utils.InternedString
 import com.snap.valdi.utils.Ref
 import com.snap.valdi.views.ValdiClippableView
 import com.snap.valdi.views.ValdiForegroundHolder
+import com.snap.valdi.views.ValdiTextViewBase
 import com.snap.valdi.views.touches.ValdiGestureRecognizer
 import com.snap.valdi.views.touches.GestureRecognizers
+import com.snapchat.client.valdi.UndefinedValue
 import com.snapchat.client.valdi.utils.NativeHandleWrapper
 
 object ViewUtils {
@@ -216,7 +225,9 @@ object ViewUtils {
         setValdiContext(view, null)
         setViewNodeId(view, 0)
 
-        getOrCreateValdiObjects(view).maskPathRenderer = null
+        val valdiObjects = getOrCreateValdiObjects(view)
+        valdiObjects.maskPathRenderer = null
+        valdiObjects.maskImageGradient = null
     }
 
     // Apply the final value for all ongoing value animators and 
@@ -394,7 +405,12 @@ object ViewUtils {
         // Yoga already handles the layout positioning for all views.
         // 
         // TextView is the base class for EditText, AppCompatEditText, AppCompatTextView, etc.
-        if (view is android.widget.TextView) {
+        val textView = if (view is ValdiTextViewBase) {
+            view.backingTextView
+        } else {
+            view as? android.widget.TextView
+        }
+        if (textView != null) {
             val targetDirection = if (isRightToLeft) {
                 View.LAYOUT_DIRECTION_RTL
             } else {
@@ -402,8 +418,8 @@ object ViewUtils {
             }
             
             // Only set if changed to avoid potential invalidation overhead
-            if (view.layoutDirection != targetDirection) {
-                view.layoutDirection = targetDirection
+            if (textView.layoutDirection != targetDirection) {
+                textView.layoutDirection = targetDirection
             }
         }
     }
@@ -490,6 +506,51 @@ object ViewUtils {
         return maskPathRenderer
     }
 
+    fun getOptionalImageMaskGradient(view: View): ValdiGradient? {
+        return getOptionalValdiObjects(view)?.maskImageGradient
+    }
+
+    fun setImageMaskGradient(view: View, gradient: ValdiGradient?) {
+        getOrCreateValdiObjects(view).maskImageGradient = gradient
+    }
+
+    // UI thread only — shader is set/cleared per draw call to avoid allocation.
+    private val maskImagePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+    }
+
+    fun drawImageMaskGradient(canvas: Canvas, width: Float, height: Float, gradient: ValdiGradient) {
+        if (width <= 0f || height <= 0f) return
+        val shader = if (gradient.gradientType == ValdiGradient.GradientType.RADIAL) {
+            RadialGradient(
+                width / 2f, height / 2f,
+                kotlin.math.max(width, height) / 2f,
+                gradient.colors, gradient.locations,
+                Shader.TileMode.CLAMP
+            )
+        } else {
+            var x0 = 0f; var y0 = 0f; var x1 = 0f; var y1 = height
+            when (gradient.orientation) {
+                0 -> { x0 = 0f; y0 = 0f; x1 = 0f; y1 = height }
+                1 -> { x0 = width; y0 = 0f; x1 = 0f; y1 = height }
+                2 -> { x0 = width; y0 = 0f; x1 = 0f; y1 = 0f }
+                3 -> { x0 = width; y0 = height; x1 = 0f; y1 = 0f }
+                4 -> { x0 = 0f; y0 = height; x1 = 0f; y1 = 0f }
+                5 -> { x0 = 0f; y0 = height; x1 = width; y1 = 0f }
+                6 -> { x0 = 0f; y0 = 0f; x1 = width; y1 = 0f }
+                7 -> { x0 = 0f; y0 = 0f; x1 = width; y1 = height }
+            }
+            LinearGradient(
+                x0, y0, x1, y1,
+                gradient.colors, gradient.locations,
+                Shader.TileMode.CLAMP
+            )
+        }
+        maskImagePaint.shader = shader
+        canvas.drawRect(0f, 0f, width, height, maskImagePaint)
+        maskImagePaint.shader = null
+    }
+
     private const val MAX_OVERLAPPING_RENDERING_SIZE = 4096
 
     fun hasOverlappingRendering(view: View): Boolean {
@@ -512,6 +573,10 @@ object ViewUtils {
      * Resolves the IValdiViewNode instance from the given Ref object
      */
     fun getViewNodeFromRef(ref: Ref): IValdiViewNode? {
+        // UndefinedValue may be returned by the Valdi C++ bridge when a component ref is in an
+        // undefined state (not yet initialized or already destroyed). It doesn't implement Ref
+        // despite being passed as one, so calling ref.get() would throw IncompatibleClassChangeError.
+        if ((ref as Any) is UndefinedValue) return null
         val item = ref.get()
 
         return when (item) {
@@ -526,6 +591,7 @@ object ViewUtils {
      */
     @Deprecated("This will stop working with SnapDrawing. Use getViewNodeFromRef() instead")
     fun getViewFromRef(ref: Ref): View? {
+        if ((ref as Any) is UndefinedValue) return null
         val item = ref.get()
 
         return when (item) {
@@ -539,6 +605,7 @@ object ViewUtils {
      * Return a Drawable representation of the given Ref.
      */
     fun refToDrawable(ref: Ref): Drawable? {
+        if ((ref as Any) is UndefinedValue) return null
         val item = ref.get()
 
         return when (item) {

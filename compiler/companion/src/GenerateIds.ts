@@ -38,6 +38,24 @@ interface Id {
   description?: string;
 }
 
+function escapeObjCString(str: string): string {
+  return str
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t');
+}
+
+function escapeJSSingleQuotedString(str: string): string {
+  return str
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t');
+}
+
 function parseIds(moduleName: string, fileContent: string): Id[] {
   const idsYaml = yaml.load(fileContent.toString()) as IdsYaml;
 
@@ -96,6 +114,11 @@ function generateIOSIds(ids: Id[], iosHeaderImportPath: string): ObjectiveCFile 
   impl.appendImport('<Foundation/Foundation.h>');
   impl.appendImport(iosHeaderImportPath);
 
+  // Nullability must be explicit (or assumed-nonnull) for -Wnullability-completeness
+  // when these declarations appear in umbrella-imported generated headers.
+  header.append('NS_ASSUME_NONNULL_BEGIN\n\n');
+  impl.append('NS_ASSUME_NONNULL_BEGIN\n\n');
+
   let first = true;
 
   for (const id of ids) {
@@ -117,10 +140,13 @@ function generateIOSIds(ids: Id[], iosHeaderImportPath: string): ObjectiveCFile 
     header.append(`extern ${functionSignature};\n`);
     impl.append(`${functionSignature} {\n`);
     impl.withIndentation('    ', () => {
-      impl.append(`return @"${id.identifier}";\n`);
+      impl.append(`return @"${escapeObjCString(id.identifier)}";\n`);
     });
     impl.append('}\n');
   }
+
+  header.append('\nNS_ASSUME_NONNULL_END\n');
+  impl.append('\nNS_ASSUME_NONNULL_END\n');
 
   return {
     header: header.content(),
@@ -150,7 +176,7 @@ function generateTypeScriptIds(ids: Id[]): TypeScriptFile {
     }
     definition.append(`static ${id.name}(): string;\n`);
 
-    implementation.append(`${id.name}: () => '${id.identifier}',\n`);
+    implementation.append(`${id.name}: () => '${escapeJSSingleQuotedString(id.identifier)}',\n`);
   }
 
   definition.endIndent();

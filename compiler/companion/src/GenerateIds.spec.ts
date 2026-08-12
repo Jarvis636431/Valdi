@@ -33,12 +33,16 @@ describe('Ids Files Geneerator', () => {
 
 #import <Foundation/Foundation.h>
 
+NS_ASSUME_NONNULL_BEGIN
+
 /**
  * This is my first id
  */
 extern NSString *SCValdiIdHelloWorldMyFirstId();
 
 extern NSString *SCValdiIdHelloWorldMySecondId();
+
+NS_ASSUME_NONNULL_END
 `,
     );
   });
@@ -55,6 +59,8 @@ extern NSString *SCValdiIdHelloWorldMySecondId();
 #import <Foundation/Foundation.h>
 #import "SCHelloWorld/Ids.h"
 
+NS_ASSUME_NONNULL_BEGIN
+
 NSString *SCValdiIdHelloWorldMyFirstId() {
     return @"hello_world/my_first_id";
 }
@@ -62,6 +68,8 @@ NSString *SCValdiIdHelloWorldMyFirstId() {
 NSString *SCValdiIdHelloWorldMySecondId() {
     return @"hello_world/my_second_id";
 }
+
+NS_ASSUME_NONNULL_END
 `,
     );
   });
@@ -93,5 +101,25 @@ NSString *SCValdiIdHelloWorldMySecondId() {
 }
 `,
     );
+  });
+
+  it('escapes double quotes in ObjC impl when module name contains them', () => {
+    const iosImpl = generateIds('hello"world', '"SCHelloWorld/Ids.h"', TEST_ID_FILES).ios.impl;
+    expect(iosImpl).toContain('return @"hello\\"world/my_first_id";');
+  });
+
+  it('escapes backslashes in ObjC impl when module name contains them', () => {
+    const iosImpl = generateIds('hello\\world', '"SCHelloWorld/Ids.h"', TEST_ID_FILES).ios.impl;
+    expect(iosImpl).toContain('return @"hello\\\\world/my_first_id";');
+  });
+
+  it('escapes single quotes in JS impl when module name contains them', () => {
+    const jsImpl = generateIds("hello'world", '"SCHelloWorld/Ids.h"', TEST_ID_FILES).typescript.implementation;
+    expect(jsImpl).toContain("myFirstId: () => 'hello\\'world/my_first_id',");
+  });
+
+  it('escapes backslashes in JS impl when module name contains them', () => {
+    const jsImpl = generateIds('hello\\world', '"SCHelloWorld/Ids.h"', TEST_ID_FILES).typescript.implementation;
+    expect(jsImpl).toContain("myFirstId: () => 'hello\\\\world/my_first_id',");
   });
 });

@@ -36,16 +36,24 @@ bazel build //src/valdi_modules/src/valdi/jasmine --platforms=//bzl/platforms:io
 
 ## Maintaining `BUILD.bazel` files
 
-To ease the burden of writing and maintainting `BUILD.bazel` Valdi provides a script to automatically generate/update/format `BUILD.bazel` files based on `module.yaml` content. In addition to that, the CI infrastructure includes a pre-cool hook to validate `BUILD.bazel` files.
+A Valdi module is configured entirely through the `valdi_module(...)` call in its `BUILD.bazel`. Edit that file directly to change module configuration.
 
-To add a new dependency:
+To add a new dependency, add the module's Bazel label to the `deps` attribute of the `valdi_module()` call in `BUILD.bazel`. For example:
 
-1. Update `module.yaml`
-2. Run the script:
-
-```sh
-./scripts/regenerate_valdi_modules_build_bazel_files.sh
+```python
+valdi_module(
+    name = "my_module",
+    srcs = glob(["src/**/*.ts", "src/**/*.tsx"]),
+    deps = [
+        "@valdi//src/valdi_modules/src/valdi/valdi_core",
+        "//src/valdi_modules/src/valdi/some_other_valdi_module",
+    ],
+)
 ```
+
+See [Core Module](./core-module.md#buildbazel) for the full list of `valdi_module()` attributes.
+
+> **Note:** Older Valdi projects may have a `module.yaml` file alongside `BUILD.bazel`. `module.yaml` is deprecated; all module configuration belongs in the `valdi_module()` rule. See [glossary](./glossary.md#moduleyaml).
 
 ## Testing
 
@@ -64,9 +72,9 @@ By default, Bazel uses the **prebuilt compiler** and builds the **companion from
 
 1. Build the Valdi compiler and place the binary where the toolchain can find it:
    ```sh
-   compiler/compiler/scripts/update_compiler.sh -s -o compiler/compiler/out
+   compiler/compiler/scripts/update_compiler_bazel.sh -o compiler/compiler/out
    ```
-   This produces `compiler/compiler/out/macos/valdi_compiler` (or `out/linux/valdi_compiler` on Linux). The `-s` flag skips analytics upload. The script works in both the mirrored public repo and the mobile monorepo.
+   This produces `compiler/compiler/out/macos/valdi_compiler` (or `out/linux/valdi_compiler` on Linux). The compiler is built with Bazel (`//compiler/compiler:local_valdi_compiler`), so no Swift toolchain install is required. The script works in both the mirrored public repo and the mobile monorepo.
 
 2. Build Valdi modules with the local compiler:
    ```sh

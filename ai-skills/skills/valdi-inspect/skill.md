@@ -118,11 +118,29 @@ valdi inspect snapshot <elementId> <contextId>
 valdi inspect snapshot <elementId> <contextId> --output /tmp/my-snap.png
 ```
 
-Output: `{ path: "/tmp/valdi-snapshot-<elementId>.png" }`
+Output: `{ path: "/var/folders/.../valdi-snapshot-<elementId>.png" }`
 
 The PNG is written to disk. Read it with the `Read` tool to view it visually.
 
 **Getting elementId**: Use `element.id` from the `tree` output (a number, e.g. `1`, `5`, `42`).
+
+#### Using `--key` instead of numeric IDs (recommended)
+
+Instead of looking up numeric element IDs from the tree, use the `--key` flag to resolve by component tag name or element `key` prop:
+
+```
+valdi inspect snapshot --key PreviewRoot
+valdi inspect snapshot --key weather-card --port 13591
+```
+
+The `--key` flag searches the component tree for a matching tag name or `key` prop and resolves it to the element ID automatically.
+
+**This is stable across hot-reloads** — element IDs change on every reload, but component names and `key` props stay the same. Use `--key` instead of numeric IDs to avoid re-querying the tree after each hot-reload cycle.
+
+Custom keys can be set on any element in TSX:
+```tsx
+<view key="weather-card" style={styles.card}>
+```
 
 ---
 

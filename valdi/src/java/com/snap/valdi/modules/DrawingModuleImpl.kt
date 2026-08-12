@@ -38,6 +38,7 @@ class DrawingModuleImpl(
         val fontName = specs.font ?: throw ValdiException("No font passed in")
 
         val fontAttributes = FontAttributes(null,
+                null,
                 0f,
                 null,
                 null,
@@ -45,11 +46,14 @@ class DrawingModuleImpl(
                 null,
                 null,
                 null,
+                null,
                 0,
+                null,
                 TextAlignment.LEFT,
                 false,
                 null,
-                0F)
+                0F,
+                null)
         fontAttributes.applyFont(fontName)
 
         val descriptor = FontDescriptor(fontAttributes.fontName!!)

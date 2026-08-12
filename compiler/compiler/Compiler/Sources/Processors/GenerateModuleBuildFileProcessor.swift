@@ -11,6 +11,7 @@ private struct ModuleBuildTargetConfig {
     let projectConfig: ValdiProjectConfig
     let name: String
     let iosModuleName: String
+    let iosClassPrefix: String?
     let iosLanguage: IOSLanguage
     let iosGeneratedContextFactories: [String]
 
@@ -29,6 +30,9 @@ private struct ModuleBuildTargetConfig {
     let sqlDatabaseNames: [String]?
     let protoDeclSourceDirs: SourceDirTracking
 
+    let compilationModeConfig: CompilationModeConfig
+    let compilationModeExplicit: Bool
+
     let disableAnnotationProcessing: Bool
     let asyncStrictMode: Bool
     let stringsDir: String?
@@ -37,6 +41,7 @@ private struct ModuleBuildTargetConfig {
     let downloadableAssets: Bool
     let downloadableSources: Bool
     let androidClassPath: String?
+    let androidExportStrings: Bool
     let singleFileCodegen: Bool
     let hasIOSExports: Bool
     let hasAndroidExports: Bool
@@ -319,14 +324,20 @@ private struct ModuleBuildFile {
             """)
         }
 
+        maybeAppendStringAttribute("ios_class_prefix", value: config.iosClassPrefix)
         maybeAppendStringAttribute("strings_dir", value: config.stringsDir)
         maybeAppendStringAttribute("ids_yaml", value: config.idsYaml)
         maybeAppendStringAttribute("android_class_path", value: config.androidClassPath)
+        maybeAppendBoolAttribute("android_export_strings", value: config.androidExportStrings, appendOnlyIf: .valueFalse)
 
         switch config.iosLanguage {
         case .objc: break // default is "objc", no need to add anything
         case .swift: maybeAppendStringAttribute("ios_language", value: "swift")
         case .both: maybeAppendStringListAttribute("ios_language", values: ["objc", "swift"])
+        }
+
+        if config.compilationModeExplicit, let compilationModeStr = config.compilationModeConfig.asBazelString {
+            maybeAppendStringAttribute("compilation_mode", value: compilationModeStr)
         }
 
         maybeAppendBoolAttribute("disable_annotation_processing", value: config.disableAnnotationProcessing, appendOnlyIf: .valueTrue)
@@ -582,6 +593,7 @@ final class GenerateModuleBuildFileProcessor: CompilationProcessor {
         let config = ModuleBuildTargetConfig(projectConfig: self.projectConfig,
                                              name: moduleName,
                                              iosModuleName: bundleInfo.iosModuleName,
+                                             iosClassPrefix: bundleInfo.iosClassPrefix,
                                              iosLanguage: bundleInfo.iosLanguage,
                                              iosGeneratedContextFactories: bundleInfo.iosGeneratedContextFactories,
                                              iosOutputTarget: iosOutputTarget,
@@ -597,6 +609,8 @@ final class GenerateModuleBuildFileProcessor: CompilationProcessor {
                                              sqlSourceDirs: sqlSourceDirs,
                                              sqlDatabaseNames: sqlDatabaseNames,
                                              protoDeclSourceDirs: protoDeclSourceDirs,
+                                             compilationModeConfig: bundleInfo.compilationModeConfig,
+                                             compilationModeExplicit: bundleInfo.compilationModeExplicit,
                                              disableAnnotationProcessing: bundleInfo.disableAnnotationProcessing,
                                              asyncStrictMode: bundleInfo.asyncStrictMode,
                                              stringsDir: bundleInfo.stringsConfig?.bundleRelativePath,
@@ -605,6 +619,7 @@ final class GenerateModuleBuildFileProcessor: CompilationProcessor {
                                              downloadableAssets: bundleInfo.downloadableAssets,
                                              downloadableSources: bundleInfo.downloadableSources,
                                              androidClassPath: bundleInfo.androidClassPath,
+                                             androidExportStrings: bundleInfo.androidExportStrings,
                                              singleFileCodegen: bundleInfo.singleFileCodegen,
                                              hasIOSExports: hasIOSExports,
                                              hasAndroidExports: hasAndroidExports,

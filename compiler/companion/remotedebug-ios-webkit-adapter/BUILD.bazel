@@ -42,7 +42,6 @@ ts_project(
         ":node_modules/@types/request",
         ":node_modules/@types/which",
         ":node_modules/@types/ws",
-        ":node_modules/gulp-typescript",
         ":node_modules/optimist",
     ],
 )

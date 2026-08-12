@@ -3,36 +3,53 @@ module(name = "valdi", version = "0.1")
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
 bazel_dep(name = "toolchains_llvm", version = "1.3.0")
-bazel_dep(name = "apple_support", version = "1.21.0", repo_name = "build_bazel_apple_support")
+bazel_dep(name = "apple_support", version = "1.22.1", repo_name = "build_bazel_apple_support")
 
-bazel_dep(name = "protobuf", version = "27.0", repo_name = "protobuf_cpp")
+bazel_dep(name = "protobuf", version = "29.3", repo_name = "protobuf_cpp")
 single_version_override(
     module_name = "protobuf",
-    version = "27.0",
+    version = "29.3",
 )
 bazel_dep(name = "rules_pkg", version = "0.9.1")
 single_version_override(
     module_name = "rules_pkg",
     version = "0.9.1",
 )
-bazel_dep(name = "rules_proto", version = "6.0.2")
+bazel_dep(name = "rules_proto", version = "7.0.2")
 bazel_dep(name = "rules_python", version = "1.4.1")
 
-bazel_dep(name = "rules_cc", version = "0.0.17")
-bazel_dep(name = "googletest", version = "1.13.0", repo_name = "gtest")
+bazel_dep(name = "rules_cc", version = "0.1.2")
+bazel_dep(name = "google_benchmark", version = "1.9.5", repo_name = "com_github_google_benchmark")
+bazel_dep(name = "googletest", version = "1.17.0", repo_name = "gtest")
 single_version_override(
     module_name = "zlib",
     version = "1.3.2",
 )
 
-bazel_dep(name = "bazel_skylib", version = "1.2.0")
-bazel_dep(name = "rules_java", version = "7.4.0")
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "rules_java", version = "8.14.0")
+bazel_dep(name = "rules_rust", version = "0.64.0")
 
-bazel_dep(name = "rules_android", version = "0.5.1")
+bazel_dep(name = "rules_android", version = "0.6.5")
+bazel_dep(name = "rules_shell", version = "0.4.1")
 bazel_dep(name = "rules_android_ndk", version = "0.1.3")
 single_version_override(module_name = "rules_android_ndk", patches = [
-    "@valdi//third-party/rules_android_ndk/patches:expose_bins.patch",
+    "@valdi//registry/modules/rules_android_ndk/0.1.3/patches:rules_android_ndk.patch",
 ])
+
+# Make rules_android's own tools/jdk bootclasspath use the hermetic Android SDK instead
+# of rules_android's ANDROID_HOME-based android_sdk_repository_extension. Without this,
+# building any Android target on a host with no ANDROID_HOME fails to find
+# @androidsdk//:core-for-system-modules-jar. Registry-level equivalent lives in
+# registry/modules/rules_android/0.6.5/source.json (for CLI-bootstrapped apps).
+single_version_override(
+    module_name = "rules_android",
+    version = "0.6.5",
+    patches = [
+        "@valdi//registry/modules/rules_android/0.6.5/patches:rules_android_hermetic_sdk.patch",
+        "@valdi//registry/modules/rules_android/0.6.5/patches:rules_android_module_bzl.patch",
+    ],
+)
 
 remote_android_extensions = use_extension(
     "@rules_android//bzlmod_extensions:android_extensions.bzl",
@@ -40,12 +57,12 @@ remote_android_extensions = use_extension(
 )
 use_repo(remote_android_extensions, "android_gmaven_r8", "android_tools")
 
-android_sdk_repository_extension = use_extension("@rules_android//rules/android_sdk_repository:rule.bzl", "android_sdk_repository_extension")
-android_sdk_repository_extension.configure(
+hermetic_android_sdk_extension = use_extension("//bzl:hermetic_android_sdk.bzl", "hermetic_android_sdk_extension")
+hermetic_android_sdk_extension.configure(
     api_level = 36,
     build_tools_version = "34.0.0",
 )
-use_repo(android_sdk_repository_extension, "androidsdk")
+use_repo(hermetic_android_sdk_extension, "androidsdk")
 
 register_toolchains(
     "@rules_android//toolchains/android:all",
@@ -53,25 +70,41 @@ register_toolchains(
 )
 register_toolchains("@androidsdk//:sdk-toolchain", "@androidsdk//:all")
 
-android_ndk_repository_extension = use_extension("@rules_android_ndk//:extension.bzl", "android_ndk_repository_extension")
-use_repo(android_ndk_repository_extension, "androidndk")
+hermetic_ndk_extension = use_extension("//bzl:hermetic_ndk.bzl", "hermetic_ndk_extension")
+use_repo(hermetic_ndk_extension, "androidndk")
 
 register_toolchains("@androidndk//:all")
 
 bazel_dep(name = "rules_kotlin", version = "1.9.0")
 single_version_override(
     module_name = "rules_kotlin",
-    patches = ["@valdi//third-party/rules_kotlin:fix_manifest_custom_package.patch"],
+    version = "1.9.5",
+    patches = [
+        "@valdi//registry/modules/rules_kotlin/1.9.0/patches:rules_kotlin.patch",
+        "@valdi//registry/modules/rules_kotlin/1.9.0/patches:rules_kotlin_hermetic_sdk.patch",
+        "@valdi//registry/modules/rules_kotlin/1.9.0/patches:rules_kotlin_android_sdk.patch",
+        "@valdi//registry/modules/rules_kotlin/1.9.0/patches:rules_kotlin_module_bzl_v195.patch",
+    ],
 )
-bazel_dep(name = "rules_jvm_external", version = "6.2")
+bazel_dep(name = "rules_jvm_external", version = "6.6")
 
 bazel_dep(name = "rules_xcodeproj", version = "3.2.0")
 
 bazel_dep(name = "rules_swift", version = "3.1.2", repo_name = "build_bazel_rules_swift")
 single_version_override(
     module_name = "rules_swift",
-    patches = ["@valdi//third-party/rules_swift/patches:rules_swift.patch"],
+    patches = ["@valdi//registry/modules/rules_swift/3.1.2/patches:rules_swift.patch"],
     patch_strip = 1,
+)
+
+swift_toolchains_extension = use_extension("//bzlmod:swift_toolchains_extension.bzl", "swift_toolchains_extension")
+use_repo(
+    swift_toolchains_extension,
+    "swift_toolchain_linux_x86_64",
+)
+
+register_toolchains(
+    "@swift_toolchain_linux_x86_64//:rules_swift_toolchain",
 )
 
 bazel_dep(name = "rules_apple", version = "4.0.0", repo_name = "build_bazel_rules_apple")
@@ -80,12 +113,21 @@ single_version_override(
     version = "4.0.0",
 )
 
-bazel_dep(name = "bazel_features", version = "1.10.0")
+bazel_dep(name = "bazel_features", version = "1.32.0")
 
-bazel_dep(name = "platforms", version = "0.0.11")
+bazel_dep(name = "platforms", version = "1.0.0")
 
-bazel_dep(name = "aspect_rules_js", version = "2.0.0")
-bazel_dep(name = "aspect_bazel_lib", version = "2.14.0")
+bazel_dep(name = "aspect_rules_js", version = "2.9.2")
+# Explicit dep so we can patch in Node 22 support. Remove once rules_nodejs
+# natively includes Node 22 in its built-in version list.
+bazel_dep(name = "rules_nodejs", version = "6.2.0")
+single_version_override(
+    module_name = "rules_nodejs",
+    version = "6.2.0",
+    patches = ["@valdi//registry/modules/rules_nodejs/6.2.0/patches:rules_nodejs.patch"],
+    patch_strip = 1,
+)
+bazel_dep(name = "aspect_bazel_lib", version = "2.19.2")
 
 bazel_dep(name = "aspect_rules_ts", version = "3.7.0")
 
@@ -107,6 +149,8 @@ http_archive(
     integrity = "sha256-+GQiTtN6H8TQz/+YkVz73dHeYAZ86/9hAUwTlkISx48=",
     strip_prefix = "hermes-880b1645b5dca974f4329dc4108692d301abee0d",
     build_file = "@valdi//third-party/hermes:hermes.BUILD",
+    patch_args = ["-p1"],
+    patches = ["@valdi//third-party/hermes/patches:nontrivial_memcall.patch"],
 )
 
 bazel_dep(name = "boringssl", version = "0.20250415.0")
@@ -184,12 +228,6 @@ local_path_override(
     path = "bin",
 )
 
-bazel_dep(name = "resvg_libs")
-local_path_override(
-    module_name = "resvg_libs",
-    path = "third-party/resvg/resvg_libs",
-)
-
 bazel_dep(name = "jsoncpp", version = "1.9.6")
 
 http_archive(
@@ -243,10 +281,130 @@ http_archive(
 
 http_archive(
     name = "resvg",
-    url = "https://github.com/RazrFalcon/resvg/archive/a739aef5d01360ec238c886bc50674f31458df00.zip",
+    url = "https://github.com/linebender/resvg/archive/b3c7f58d059da6aa0a25141b1948c61b8c579c12.zip",
     build_file = "@valdi//third-party/resvg:resvg.BUILD",
-    strip_prefix = "resvg-a739aef5d01360ec238c886bc50674f31458df00",
-    integrity = "sha256-kohUhIYyFoaeIHLBhYwq6g7+h34r3i9/IIQoWyJAmSE=",
+    strip_prefix = "resvg-b3c7f58d059da6aa0a25141b1948c61b8c579c12",
+    integrity = "sha256-0F/rzIZh2AQW3zyJ8S0c269xlbCvn8rFSAI2r0jLdgU=",
+)
+
+http_archive(
+    name = "pngquant",
+    url = "https://github.com/kornelski/pngquant/archive/5b4e91f5dd6af27c928474ffd526bb69e17b0f37.zip",
+    build_file = "@valdi//third-party/pngquant:pngquant.BUILD",
+    strip_prefix = "pngquant-5b4e91f5dd6af27c928474ffd526bb69e17b0f37",
+    integrity = "sha256-CqMGdZFDTa+6gyxJN3Wvr6d5O4ezR9xvyBd1tzUNR+8=",
+    patch_args = ["-p1"],
+    patches = ["@valdi//third-party/pngquant:pngquant-build-script-bazel-headers.patch"],
+)
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2024",
+    extra_target_triples = [
+        "aarch64-apple-ios",
+        "aarch64-apple-ios-sim",
+        "aarch64-linux-android",
+        "armv7-linux-androideabi",
+        "x86_64-apple-ios",
+        "x86_64-linux-android",
+    ],
+    versions = ["1.87.0"],
+)
+use_repo(rust, "rust_toolchains")
+register_toolchains("@rust_toolchains//:all")
+
+resvg_crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+resvg_crate.spec(package = "gif", repositories = ["resvg_crates"], version = "0.14.1")
+resvg_crate.spec(package = "image-webp", repositories = ["resvg_crates"], version = "0.2.4")
+resvg_crate.spec(package = "zune-jpeg", default_features = False, features = ["std"], repositories = ["resvg_crates"], version = "0.5.8")
+resvg_crate.spec(package = "base64", repositories = ["resvg_crates"], version = "0.22.1")
+resvg_crate.spec(package = "data-url", repositories = ["resvg_crates"], version = "0.3.2")
+resvg_crate.spec(package = "flate2", default_features = False, features = ["rust_backend"], repositories = ["resvg_crates"], version = "1.1.5")
+resvg_crate.spec(package = "imagesize", repositories = ["resvg_crates"], version = "0.14.0")
+resvg_crate.spec(package = "kurbo", repositories = ["resvg_crates"], version = "0.13.0")
+resvg_crate.spec(package = "log", repositories = ["resvg_crates"], version = "0.4.29")
+resvg_crate.spec(package = "pico-args", features = ["eq-separator"], repositories = ["resvg_crates"], version = "0.5.0")
+resvg_crate.spec(package = "rgb", repositories = ["resvg_crates"], version = "0.8.52")
+resvg_crate.spec(package = "roxmltree", repositories = ["resvg_crates"], version = "0.21.1")
+resvg_crate.spec(package = "simplecss", repositories = ["resvg_crates"], version = "0.2.2")
+resvg_crate.spec(package = "siphasher", repositories = ["resvg_crates"], version = "1.0.1")
+resvg_crate.spec(package = "strict-num", repositories = ["resvg_crates"], version = "0.1.1")
+resvg_crate.spec(package = "svgtypes", repositories = ["resvg_crates"], version = "0.16.1")
+resvg_crate.spec(package = "tiny-skia", repositories = ["resvg_crates"], version = "0.12.0")
+resvg_crate.spec(package = "tiny-skia-path", repositories = ["resvg_crates"], version = "0.12.0")
+resvg_crate.spec(package = "xmlwriter", repositories = ["resvg_crates"], version = "0.1.0")
+resvg_crate.render_config(
+    default_package_name = "",
+    repositories = ["resvg_crates"],
+)
+resvg_crate.from_specs(
+    name = "resvg_crates",
+    cargo_lockfile = "@resvg//:Cargo.lock",
+    lockfile = "//third-party/resvg:cargo-bazel-lock.json",
+    supported_platform_triples = [
+        "aarch64-apple-darwin",
+        "aarch64-apple-ios",
+        "aarch64-apple-ios-sim",
+        "aarch64-linux-android",
+        "armv7-linux-androideabi",
+        "x86_64-apple-ios",
+        "x86_64-linux-android",
+        "x86_64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+    ],
+)
+use_repo(resvg_crate, "resvg_crates")
+
+rust_host_tools = use_extension("@rules_rust//rust:extensions.bzl", "rust_host_tools")
+rust_host_tools.host_tools(
+    name = "rust_host_tools_nightly",
+    version = "nightly",
+)
+use_repo(rust_host_tools, "rust_host_tools_nightly")
+
+pngquant_crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+pngquant_crate.spec(package = "pngquant", artifact = "bin", default_features = False, features = ["png-static", "z-static"], repositories = ["pngquant_crates"], version = "=3.0.0")
+pngquant_crate.annotation(
+    crate = "pngquant",
+    build_script_data = [
+        "@pngquant_crates__imagequant-sys-4.1.0//:libimagequant.h",
+        "@pngquant_crates__libpng-sys-1.1.11//:vendor/png.h",
+        "@pngquant_crates__libpng-sys-1.1.11//:vendor/pngconf.h",
+    ],
+    build_script_env = {
+        "DEP_IMAGEQUANT_INCLUDE_FILE": "$(execpath @pngquant_crates__imagequant-sys-4.1.0//:libimagequant.h)",
+        "DEP_PNG_INCLUDE_FILE": "$(execpath @pngquant_crates__libpng-sys-1.1.11//:vendor/png.h)",
+    },
+    gen_all_binaries = True,
+    patch_args = ["-p1"],
+    patches = ["//third-party/pngquant:pngquant-build-script-bazel-headers.patch"],
+    repositories = ["pngquant_crates"],
+)
+pngquant_crate.render_config(
+    default_package_name = "",
+    repositories = ["pngquant_crates"],
+)
+pngquant_crate.from_specs(
+    name = "pngquant_crates",
+    cargo_lockfile = "//third-party/pngquant:Cargo.lock",
+    host_tools = "@rust_host_tools_nightly",
+    supported_platform_triples = [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+    ],
+)
+use_repo(
+    pngquant_crate,
+    "pngquant_crates",
+    "pngquant_crates__cc-1.2.61",
+    "pngquant_crates__dunce-1.0.5",
+    "pngquant_crates__getopts-0.2.24",
+    "pngquant_crates__imagequant-sys-4.1.0",
+    "pngquant_crates__libc-0.2.186",
+    "pngquant_crates__libpng-sys-1.1.11",
+    "pngquant_crates__libz-sys-1.1.28",
+    "pngquant_crates__wild-2.2.1",
 )
 
 bazel_dep(name = "rules_license", version = "1.0.0")
@@ -267,7 +425,9 @@ http_archive(
 http_archive(
     name = "libjpeg_turbo",
     build_file = "@skia//bazel/external/libjpeg_turbo:BUILD.bazel",
-    url = "https://chromium.googlesource.com/chromium/deps/libjpeg_turbo/+archive/e14cbfaa85529d47f9f55b0f104a579c1061f9ad.tar.gz",
+    url = "https://github.com/librepo/chromium-libjpeg_turbo/archive/e14cbfaa85529d47f9f55b0f104a579c1061f9ad.tar.gz",
+    strip_prefix = "chromium-libjpeg_turbo-e14cbfaa85529d47f9f55b0f104a579c1061f9ad",
+    integrity = "sha256-tjyUKJeHb8oX2Y8LcO+b4P1GUWHsGaf3dQHOtN/bnf4=",
     patches = [
         "@valdi//third-party/libjpeg_turbo:warning_fix.patch",
         "@valdi//third-party/libjpeg_turbo:include_fix.patch",
@@ -277,7 +437,9 @@ http_archive(
 http_archive(
     name = "libpng",
     build_file = "@skia//bazel/external/libpng:BUILD.bazel",
-    url = "https://skia.googlesource.com/third_party/libpng.git/+archive/ed217e3e601d8e462f7fd1e04bed43ac42212429.tar.gz",
+    url = "https://github.com/aosp-mirror/platform_external_libpng/archive/ed217e3e601d8e462f7fd1e04bed43ac42212429.tar.gz",
+    strip_prefix = "platform_external_libpng-ed217e3e601d8e462f7fd1e04bed43ac42212429",
+    integrity = "sha256-W+kzz3e2EKLJ2pqXKwV4v7TAmJJAW2T0PpLD0K4s48Q=",
     patch_args = ["-p1"],
     patches = [
         "@valdi//third-party/libpng:fix_armv7.patch",
@@ -292,9 +454,19 @@ http_archive(
 )
 
 http_archive(
+    name = "wuffs",
+    build_file = "@skia//bazel/external/wuffs:BUILD.bazel",
+    url = "https://github.com/google/wuffs-mirror-release-c/archive/e3f919ccfe3ef542cfc983a82146070258fb57f8.tar.gz",
+    strip_prefix = "wuffs-mirror-release-c-e3f919ccfe3ef542cfc983a82146070258fb57f8",
+    integrity = "sha256-6EnasfNy8Wt4K6dSjn9wKB41QlvS1kTJKjb7lZCfmNs=",
+)
+
+http_archive(
     name = "zlib_skia",
     build_file = "@skia//bazel/external/zlib_skia:BUILD.bazel",
-    url = "https://chromium.googlesource.com/chromium/src/third_party/zlib/+archive/646b7f569718921d7d4b5b8e22572ff6c76f2596.tar.gz",
+    url = "https://github.com/gsource-mirror/chromium-src-third_party-zlib/archive/646b7f569718921d7d4b5b8e22572ff6c76f2596.tar.gz",
+    strip_prefix = "chromium-src-third_party-zlib-646b7f569718921d7d4b5b8e22572ff6c76f2596",
+    integrity = "sha256-3Wrc+RYXSPFcLyzH36k5cRldSn8jWknXXbTMVDhclo4=",
     patch_args = ["-p1"],
     patches = [
         "@valdi//third-party/zlib_skia:android_ios_x86_64.patch",
@@ -314,6 +486,9 @@ http_archive(
     url = "https://github.com/libexpat/libexpat/archive/624da0f593bb8d7e146b9f42b06d8e6c80d032a3.tar.gz",
     strip_prefix = "libexpat-624da0f593bb8d7e146b9f42b06d8e6c80d032a3",
 )
+
+node = use_extension("@rules_nodejs//nodejs:extensions.bzl", "node")
+node.toolchain(node_version = "22.12.0")
 
 npm = use_extension("@aspect_rules_js//npm:extensions.bzl", "npm")
 npm.npm_translate_lock(
@@ -346,7 +521,7 @@ maven.install(
         "androidx.lifecycle:lifecycle-viewmodel:2.2.0",
         "androidx.recyclerview:recyclerview:1.2.1",
         "androidx.test:core:1.5.0",
-        "androidx.test.ext:junit:1.1.3",
+        "androidx.test.ext:junit:1.1.5",
         "androidx.test:monitor:1.5.0",
         "androidx.test:runner:1.5.0",
         "com.google.android.material:material:1.2.0",
@@ -384,6 +559,33 @@ maven.install(
 
 use_repo(maven, "android_mvn")
 
+# Test-only artifacts, kept in a separate namespace from android_mvn so
+# testonly targets (e.g. valdi_android_test_support) don't leak test libraries
+# into production classpaths. In the internal linked build this repo is
+# overridden to Snap's @test_mvn (see android/snapchat/MODULE.bazel).
+maven.install(
+    name = "test_mvn",
+    artifacts = [
+        "androidx.test:core:1.5.0",
+        "androidx.test.espresso:espresso-core:3.5.1",
+        "androidx.test.ext:junit:1.1.5",
+        "androidx.test:monitor:1.6.0",
+        "androidx.test:runner:1.5.0",
+        "junit:junit:4.13.2",
+        "org.hamcrest:hamcrest-core:1.3",
+        "org.hamcrest:hamcrest-library:1.3",
+    ],
+    repositories = [
+        "https://repo1.maven.org/maven2",
+        "https://maven.google.com",
+    ],
+    aar_import_bzl_label = "@rules_android//rules:rules.bzl",
+    use_starlark_android_rules = True,
+    version_conflict_policy = "pinned",
+)
+
+use_repo(maven, "test_mvn")
+
 http_archive(
     name = "expat_config",
     url = SKIA_URL,
@@ -406,19 +608,38 @@ http_archive(
     url = "https://github.com/erikdoe/ocmock/archive/refs/tags/v3.9.4.tar.gz",
 )
 
+# Expose prebuilt compiler/jscore repos to the main workspace.
+# The bin/ sub-module also uses this extension, but targets in the main workspace
+# reference these repos via prebuilt_tools.bzl (e.g. @jscore_libs).
+valdi_compiler_repos = use_extension("//bzl:valdi_compiler_repos_extension.bzl", "valdi_compiler_repos")
+use_repo(valdi_compiler_repos, "jscore_libs", "valdi_compiler_macos", "valdi_compiler_linux")
+
 register_toolchains("@valdi//bzl/valdi:valdi_toolchain")
 
-# C++ toolchains: register both Apple CC and LLVM for standalone bzlmod builds.
-# Apple CC toolchains (from @local_config_apple_cc_toolchains) are registered first so they
-# win on macOS/iOS/tvOS targets — they declare target_compatible_with including
-# @build_bazel_apple_support//constraints:apple and support the "objc-compile" action needed by
-# objc_library. LLVM is registered second: on Linux, Apple CC toolchains require exec=macOS so
-# they never match, and LLVM's linux toolchain is selected instead (providing C++ stdlib headers).
-apple_cc_configure = use_extension("@build_bazel_apple_support//crosstool:setup.bzl", "apple_cc_configure_extension")
-use_repo(apple_cc_configure, "local_config_apple_cc_toolchains", "local_config_apple_cc")
+# C++ toolchains via unified Valdi extension — consumers inherit these
+# register_toolchains() without calling any extensions themselves.
+# Apple CC registered first (wins on macOS/iOS), LLVM second (wins on Linux).
+valdi_toolchains = use_extension("//bzl:valdi_toolchains.bzl", "valdi_toolchains")
+use_repo(valdi_toolchains, "local_config_apple_cc_toolchains", "local_config_apple_cc", "llvm_toolchain", "llvm_toolchain_llvm")
 register_toolchains("@local_config_apple_cc_toolchains//:all")
-
-llvm = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm")
-llvm.toolchain(name = "llvm_toolchain", llvm_version = "16.0.0")
-use_repo(llvm, "llvm_toolchain")
 register_toolchains("@llvm_toolchain//:all")
+
+# Swift Package Manager deps for //compiler/compiler:local_valdi_compiler.
+# Consumers loading @valdi via bzlmod should also use this extension; see
+# bzl/valdi_compiler_swift_deps.bzl.
+valdi_compiler_swift_deps = use_extension("//bzl:valdi_compiler_swift_deps.bzl", "valdi_compiler_swift_deps")
+use_repo(
+    valdi_compiler_swift_deps,
+    "chalk",
+    "legible_error",
+    "libxml2",
+    "swift_argument_parser",
+    "swift_backtrace",
+    "swift_collections",
+    "swift_crypto",
+    "swift_protobuf",
+    "swiftsoup",
+    "swxmlhash",
+    "yams",
+    "zip_lib",
+)

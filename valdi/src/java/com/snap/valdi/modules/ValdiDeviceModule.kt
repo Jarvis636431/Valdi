@@ -176,9 +176,8 @@ class ValdiDeviceModule(
         val list = marshaller.pushList(count)
         for (idx in 0..count - 1) {
             val locale = locales.get(idx)
-            val language = locale.getLanguage()
-            val country = locale.getCountry()
-            marshaller.pushString("${language}-${country}")
+            val localeString = locale.toLanguageTag()
+            marshaller.pushString(localeString)
             marshaller.setListItem(list, idx)
         }
     }

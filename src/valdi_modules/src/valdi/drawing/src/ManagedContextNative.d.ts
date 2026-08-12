@@ -58,12 +58,14 @@ export function drawFrame(
 
 export function drawFrameSync(native: SnapDrawingValdiContextNative): SnapDrawingFrameNative;
 
+export function processFrame(native: SnapDrawingValdiContextNative, deltaMs: number): void;
+
 export function disposeFrame(native: SnapDrawingFrameNative): void;
 
 /**
  * @ExportModel({
  *   ios: 'SCDrawingRect',
- *   android: 'com.snap.drawing.Rect'
+ *   android: 'com.snap.modules.drawing.Rect'
  * })
  */
 export interface Rect {

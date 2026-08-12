@@ -1,6 +1,6 @@
 load("@bazel_skylib//lib:paths.bzl", "paths")
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
-load(":valdi_compiled.bzl", "ValdiModuleInfo")
+load(":valdi_compiled.bzl", "ValdiModuleInfo", "build_dependency_entries")
 load(":valdi_paths.bzl", "get_ids_yaml_dts_path", "get_resources_dirs", "get_sql_dts_paths", "get_strings_dts_path", "infer_base_output_dir", "resolve_module_dir_and_name", "resolve_relative_project_path")
 load(":valdi_run_compiler.bzl", "generate_config", "run_valdi_compiler")
 load(":valdi_toolchain_type.bzl", "VALDI_TOOLCHAIN_TYPE")
@@ -36,7 +36,9 @@ def _prepare_explicit_input_list_file(ctx, module_name):
 
     module_content = ctx.attr.target[ValdiModuleInfo].module_definition
 
-    content = json.encode_indent({"entries": [
+    dep_entries = build_dependency_entries(ctx.attr.target[ValdiModuleInfo].deps.to_list())
+
+    content = json.encode_indent({"entries": dep_entries + [
         {
             "module_name": module_name,
             "module_path": module_directory,
@@ -61,9 +63,13 @@ def _get_files_output_paths(ctx, module_name, module_directory):
     strings_json_srcs = ctx.files.strings_json_srcs
     outputs += get_strings_dts_path(_TYPESCRIPT_GENERATED_TS_DIR, module_name, strings_json_srcs)
 
-    # res.ts
+    # res.ts (and res/<subdir>.ts for nested resource dirs)
     for res_dir in get_resources_dirs(ctx.files.res):
-        res_file = paths.join(_TYPESCRIPT_GENERATED_TS_DIR, module_name, "{}.ts".format(res_dir))
+        if res_dir == "res":
+            ts_basename = "res.ts"
+        else:
+            ts_basename = paths.join("res", res_dir + ".ts")
+        res_file = paths.join(_TYPESCRIPT_GENERATED_TS_DIR, module_name, ts_basename)
         outputs.append(res_file)
 
     return outputs
@@ -153,9 +159,10 @@ def _invoke_valdi_compiler(ctx, module_name):
 
     return outputs
 
-def _to_bazel_str(label):
-    if label.repo_name:
-        return "@{}//{}:{}".format(label.repo_name, label.package, label.name)
+def _to_bazel_str(label, own_repo_name = ""):
+    repo = label.repo_name if label.repo_name else own_repo_name
+    if repo:
+        return "@{}//{}:{}".format(repo, label.package, label.name)
     else:
         return "//{}:{}".format(label.package, label.name)
 
@@ -165,12 +172,13 @@ def _valdi_projectsync_impl(ctx):
 
     projectsync_json = ctx.actions.declare_file("projectsync.json")
 
+    own_repo = ctx.label.repo_name
     all_deps = []
     for dep in ctx.attr.target[ValdiModuleInfo].deps.to_list():
-        all_deps.append(_to_bazel_str(dep.label))
+        all_deps.append(_to_bazel_str(dep.label, own_repo))
 
     projectsync_json_dict = {
-        "target": _to_bazel_str(ctx.attr.target.label),
+        "target": _to_bazel_str(ctx.attr.target.label, own_repo),
         "dependencies": all_deps,
     }
 

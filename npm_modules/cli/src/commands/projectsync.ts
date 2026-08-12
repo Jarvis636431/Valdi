@@ -7,6 +7,7 @@ import fs from 'fs/promises';
 import type { JSONPath } from 'jsonc-parser';
 import path from 'path';
 import type { Argv } from 'yargs';
+import { STABLE_EXEC_BAZELRC_BLOCK } from '../core/constants';
 import { CliError } from '../core/errors';
 import type { ArgumentsResolver } from '../utils/ArgumentsResolver';
 import { BazelClient, BazelLabel } from '../utils/BazelClient';
@@ -112,7 +113,7 @@ function isExternalLabel(workspaceInfo: BazelWorkspaceInfo, label: BazelLabel): 
 }
 
 function getSymlinkedBazelExecutionRoot(workspaceInfo: BazelWorkspaceInfo): string {
-  return path.join(workspaceInfo.workspaceRoot, `bazel-${workspaceInfo.workspaceName}`);
+  return path.join(workspaceInfo.workspaceRoot, `bazel-${path.basename(workspaceInfo.workspaceRoot)}`);
 }
 
 function bazelLabelToAbsolutePath(workspaceInfo: BazelWorkspaceInfo, label: BazelLabel): string {
@@ -122,6 +123,24 @@ function bazelLabelToAbsolutePath(workspaceInfo: BazelWorkspaceInfo, label: Baze
   } else {
     return path.join(workspaceInfo.workspaceRoot, targetPath);
   }
+}
+
+// Backfills the `stable_exec` config into an existing project's .bazelrc.
+// BazelClient only passes --config=stable_exec once this block is present, so
+// projects created before that config existed gain it here (and keep building
+// unchanged until they do). See Valdi#137.
+async function ensureStableExecConfig(workspaceRoot: string): Promise<void> {
+  const bazelrcPath = path.join(workspaceRoot, '.bazelrc');
+  if (!fsSync.existsSync(bazelrcPath)) {
+    return;
+  }
+  const content = await fs.readFile(bazelrcPath, 'utf8');
+  if (/(^|\n)[^\n#]*:stable_exec\b/.test(content)) {
+    return;
+  }
+  const separator = content.endsWith('\n') ? '\n' : '\n\n';
+  await fs.writeFile(bazelrcPath, content + separator + STABLE_EXEC_BAZELRC_BLOCK);
+  console.log('Added the stable_exec config to .bazelrc so alternating builds and tests stop recompiling shared tools.');
 }
 
 async function buildProjectSyncs(bazel: BazelClient, workspaceRoot: string, projectSyncTargets: readonly string[]) {
@@ -151,19 +170,21 @@ async function syncPathsByLabel(
 
   // TODO(simon): Refactor projectsync bzl rule so that it recursively resolves
   // all of these without us having to take care of it.
-  const missingTargets = new Set<string>();
+  const missingLabels = new Map<string, BazelLabel>();
 
   for (const projectSyncOutput of projectSyncOutputs) {
     for (const dependency of projectSyncOutput.dependencies) {
-      const target = dependency.toString();
-      if (!pathsByLabel.has(target)) {
-        missingTargets.add(target);
+      const key = dependency.toString();
+      if (!pathsByLabel.has(key)) {
+        missingLabels.set(key, dependency);
       }
     }
   }
 
-  if (missingTargets.size > 0) {
-    const targets = [...missingTargets.values()].sort().map(f => `${f}_projectsync`);
+  if (missingLabels.size > 0) {
+    const targets = [...missingLabels.values()]
+      .sort((a, b) => a.toString().localeCompare(b.toString()))
+      .map(label => `${label.toBuildableString()}_projectsync`);
     const newProjectSyncOutputs = await buildProjectSyncs(client, workspaceInfo.workspaceRoot, targets);
     await syncPathsByLabel(client, workspaceInfo, pathsByLabel, newProjectSyncOutputs);
   }
@@ -432,6 +453,9 @@ export async function runProjectSync(
   console.log('Resolving dependencies of resolved Valdi targets...');
   const workspaceRoot = await bazel.getWorkspaceRoot();
   const executionRoot = await bazel.getExecutionRoot();
+
+  // Backfill before the first build so this run already benefits from it.
+  await ensureStableExecConfig(workspaceRoot);
 
   const allProjectSyncOutputs = await buildProjectSyncs(bazel, workspaceRoot, inputTargets);
 

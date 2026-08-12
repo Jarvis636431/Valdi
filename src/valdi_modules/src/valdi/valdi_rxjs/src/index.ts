@@ -21,7 +21,11 @@ export { map } from './operators/map';
 export { tap } from './operators/tap';
 export { filter } from './operators/filter';
 export { switchMap } from './operators/switchMap';
+export { startWith } from './operators/startWith';
 export { distinctUntilChanged } from './operators/distinctUntilChanged';
+export { mergeWith } from './operators/mergeWith';
+export { take } from './operators/take';
+export { takeUntil } from './operators/takeUntil';
 
 export { combineLatest } from './observable/combineLatest';
 export { of } from './observable/of';

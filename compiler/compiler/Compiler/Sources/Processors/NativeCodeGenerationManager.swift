@@ -26,6 +26,30 @@ enum NativeClassPurpose {
     case context
 }
 
+/// Canonical (compilationPath-without-extension, symbolName) identity for a TypeScript
+/// symbol. Matches the shape used by `TypeScriptNativeTypeResolver` and
+/// `InterfaceFlattenerSymbolIndex`. Callers should always normalize via
+/// `TSSymbolKey.make(...)` so path/extension handling stays consistent.
+struct TSSymbolKey: Hashable {
+    let strippedPath: String
+    let symbolName: String
+
+    static func make(fileName: String, symbolName: String) -> TSSymbolKey {
+        return TSSymbolKey(
+            strippedPath: fileName.removing(suffixes: FileExtensions.typescriptFileExtensionsDotted),
+            symbolName: symbolName)
+    }
+}
+
+/// Info recorded about a `@Component` class so its VM/Ctx nativeClass generation can
+/// attach the model to the right document, even when the VM/Ctx live in different files.
+struct ComponentBindingInfo {
+    let componentSourceURL: URL
+    let componentSymbolName: String
+    let viewModelKey: TSSymbolKey?
+    let contextKey: TSSymbolKey?
+}
+
 struct NativeTypesToGenerate {
     let iosType: IOSType?
     let androidClass: String?
@@ -70,8 +94,38 @@ class NativeCodeGenerationManager {
     private var viewClassesToGenerate = Synchronized<[NativeClassToGenerate]>(data: [])
     private var nativeFunctionsToGenerate = Synchronized<[NativeFunctionToGenerate]>(data: [])
     private var nativeModulesToGenerate = Synchronized<[NativeModuleToGenerate]>(data: [])
-    private var viewModelSymbolNameBySourceURL = Synchronized<[URL: String]>(data: [:])
-    private var contextSymbolNameBySourceURL = Synchronized<[URL: String]>(data: [:])
+    /// Primary storage — global TypeKey lookup. A `@ViewModel` interface `X` in file `F`
+    /// registers at `(strippedPath(F), "X")`. Classification at code-generation time
+    /// asks "is this native class's TypeKey a registered VM/Ctx?" without caring about
+    /// file location.
+    private var viewModelByTypeKey = Synchronized<[TSSymbolKey: String]>(data: [:])
+    private var contextByTypeKey = Synchronized<[TSSymbolKey: String]>(data: [:])
+
+    /// URL-keyed fallback classification map. For most files the TypeKey lookup above is
+    /// authoritative, but `.vue` scripts get preprocessed into `.vue.ts` intermediates
+    /// where `commentedFile.src.compilationPath` at annotation-registration time and at
+    /// nativeClass code-generation time can diverge in subtle ways. This sidecar mirrors
+    /// the pre-PR classification: `(sourceURL → symbolName)`. Classification succeeds if
+    /// EITHER lookup matches, so `.vue`-based Components keep resolving their
+    /// `@ViewModel` / `@Context` in every case that worked before.
+    private var viewModelSymbolBySourceURL = Synchronized<[URL: String]>(data: [:])
+    private var contextSymbolBySourceURL = Synchronized<[URL: String]>(data: [:])
+
+    /// Reverse indices from a VM/Ctx TypeKey to every Component that binds it, so the
+    /// attach step at code-generation time can populate each consuming Component's
+    /// document with the VM/Ctx's model. Arrays (not single values) because one VM/Ctx
+    /// can back multiple Components — e.g. a `GreetingCardViewModel` used by both
+    /// `HelloCard` and `GoodbyeCard`.
+    private var componentInfoByVMKey = Synchronized<[TSSymbolKey: [ComponentBindingInfo]]>(data: [:])
+    private var componentInfoByCtxKey = Synchronized<[TSSymbolKey: [ComponentBindingInfo]]>(data: [:])
+
+    /// Index used by `InterfaceFlattener` to resolve `@ExportModel` interface parents by (fileName, symbolName).
+    /// Populated once per compilation by `ApplyTypeScriptAnnotationsProcessor` before annotation processing.
+    private var interfaceFlattenerIndex: InterfaceFlattenerSymbolIndex?
+
+    func setInterfaceFlattenerIndex(_ index: InterfaceFlattenerSymbolIndex) {
+        interfaceFlattenerIndex = index
+    }
 
     init(logger: ILogger, globalIosImport: String?, rootURL: URL) {
         self.logger = logger
@@ -228,29 +282,76 @@ class NativeCodeGenerationManager {
         nativeTypeResolver.registerTypeConverter(src: commentedFile.src, emittingBundleName: compilationItem.bundleInfo.name, tsTypeName: symbol.text, fromTypePath: typeReferenceFromType.fileName, tsFromTypeName: typeReferenceFromType.name, toTypePath: typeReferenceToType.fileName, tsToTypeName: typeReferenceToType.name)
     }
 
-    func addViewModelSymbol(sourceURL: URL, symbol: String) {
-        viewModelSymbolNameBySourceURL.data { $0[sourceURL] = symbol }
+    /// Registers a `@ViewModel` interface at its `(strippedPath, symbolName)` TypeKey.
+    /// Also seeds the URL sidecar so classification still works when the compilationPath
+    /// diverges between registration and codegen (e.g. `.vue.ts` intermediates).
+    func addViewModelSymbol(sourceURL: URL, compilationPath: String, symbol: String) {
+        let key = TSSymbolKey.make(fileName: compilationPath, symbolName: symbol)
+        viewModelByTypeKey.data { $0[key] = symbol }
+        viewModelSymbolBySourceURL.data { $0[sourceURL] = symbol }
     }
 
-    func hasViewModelSymbol(for sourceURL: URL) -> Bool {
-        return viewModelSymbolNameBySourceURL.data { $0[sourceURL] != nil }
+    /// True if any `@ViewModel` has been registered whose TypeKey matches the given
+    /// (source URL, symbol name). Used by classification at code-generation time.
+    func isRegisteredViewModel(key: TSSymbolKey) -> Bool {
+        return viewModelByTypeKey.data { $0[key] != nil }
     }
 
-    func addContextSymbol(sourceURL: URL, symbol: String) {
-        contextSymbolNameBySourceURL.data { $0[sourceURL] = symbol }
+    /// URL-based classification fallback for cases (notably `.vue` scripts) where the
+    /// registration compilationPath and the codegen compilationPath don't line up.
+    func isRegisteredViewModel(sourceURL: URL, symbolName: String) -> Bool {
+        return viewModelSymbolBySourceURL.data { $0[sourceURL] } == symbolName
     }
 
-    func hasContextSymbol(for sourceURL: URL) -> Bool {
-        return contextSymbolNameBySourceURL.data { $0[sourceURL] != nil }
+    func addContextSymbol(sourceURL: URL, compilationPath: String, symbol: String) {
+        let key = TSSymbolKey.make(fileName: compilationPath, symbolName: symbol)
+        contextByTypeKey.data { $0[key] = symbol }
+        contextSymbolBySourceURL.data { $0[sourceURL] = symbol }
+    }
+
+    func isRegisteredContext(key: TSSymbolKey) -> Bool {
+        return contextByTypeKey.data { $0[key] != nil }
+    }
+
+    func isRegisteredContext(sourceURL: URL, symbolName: String) -> Bool {
+        return contextSymbolBySourceURL.data { $0[sourceURL] } == symbolName
+    }
+
+    /// Registers a `@Component` class's VM/Ctx binding so the attach step can route
+    /// each VM/Ctx nativeClass's model to the correct documents at code-generation time.
+    /// Reverse indices append rather than overwrite so multiple Components can share a
+    /// single VM/Ctx (all their documents receive the model at attach time).
+    func registerComponentBinding(_ info: ComponentBindingInfo) {
+        if let vm = info.viewModelKey {
+            componentInfoByVMKey.data { $0[vm, default: []].append(info) }
+        }
+        if let ctx = info.contextKey {
+            componentInfoByCtxKey.data { $0[ctx, default: []].append(info) }
+        }
+    }
+
+    /// All Components that bind the given VM TypeKey. Empty when no Component in this
+    /// compilation consumes it — the VM still generates as a plain exported type.
+    func componentInfos(forViewModelKey key: TSSymbolKey) -> [ComponentBindingInfo] {
+        return componentInfoByVMKey.data { $0[key] ?? [] }
+    }
+
+    func componentInfos(forContextKey key: TSSymbolKey) -> [ComponentBindingInfo] {
+        return componentInfoByCtxKey.data { $0[key] ?? [] }
     }
 
     func clear() {
         nativeClassesToGenerate.data { $0.removeAll() }
         nativeFunctionsToGenerate.data { $0.removeAll() }
         nativeModulesToGenerate.data { $0.removeAll() }
-        viewModelSymbolNameBySourceURL.data { $0.removeAll() }
-        contextSymbolNameBySourceURL.data { $0.removeAll() }
+        viewModelByTypeKey.data { $0.removeAll() }
+        contextByTypeKey.data { $0.removeAll() }
+        viewModelSymbolBySourceURL.data { $0.removeAll() }
+        contextSymbolBySourceURL.data { $0.removeAll() }
+        componentInfoByVMKey.data { $0.removeAll() }
+        componentInfoByCtxKey.data { $0.removeAll() }
         viewClassesToGenerate.data { $0.removeAll() }
+        interfaceFlattenerIndex = nil
     }
 
     private func inferIOSClassName(symbolName: String, bundleInfo: CompilationItem.BundleInfo) -> String? {
@@ -410,14 +511,13 @@ class NativeCodeGenerationManager {
         let nativeClassesToGenerate = self.nativeClassesToGenerate.data { $0 }
 
         for nativeClass in nativeClassesToGenerate {
-            var isViewModel = false
-            if let viewModelSymbolName = viewModelSymbolNameBySourceURL.data({ $0[nativeClass.sourceURL] }), viewModelSymbolName == nativeClass.dumpedSymbol.text {
-                isViewModel = true
-            }
-            var isContext = false
-            if let contextSymbolName = contextSymbolNameBySourceURL.data({ $0[nativeClass.sourceURL] }), contextSymbolName == nativeClass.dumpedSymbol.text {
-                isContext = true
-            }
+            let classKey = TSSymbolKey.make(
+                fileName: nativeClass.commentedFile.src.compilationPath,
+                symbolName: nativeClass.dumpedSymbol.text)
+            let isViewModel = isRegisteredViewModel(sourceURL: nativeClass.sourceURL, symbolName: nativeClass.dumpedSymbol.text)
+                || isRegisteredViewModel(key: classKey)
+            let isContext = isRegisteredContext(sourceURL: nativeClass.sourceURL, symbolName: nativeClass.dumpedSymbol.text)
+                || isRegisteredContext(key: classKey)
 
             if isContext && isViewModel {
                 existingItems.injectError(logger: logger, CompilerError("Cannot put @ViewModel and @Context on the same symbol"), relatedItem: nativeClass.compilationItem)
@@ -549,29 +649,78 @@ class NativeCodeGenerationManager {
                     }
                 }
 
+                // Resolve which Component (if any) this VM/Ctx should attach to. For same-file
+                // Components the attach URL is the VM/Ctx's own sourceURL (matches today's
+                // behavior). For cross-file Components (new capability), we look up the
+                // binding registered by the Component processor and attach to *its*
+                // document instead of the VM/Ctx's document.
+                let classKey = TSSymbolKey.make(
+                    fileName: nativeClassToGenerate.commentedFile.src.compilationPath,
+                    symbolName: nativeClassToGenerate.dumpedSymbol.text)
+
                 switch nativeClassPurpose {
                 case .unspecified:
                     items.append(item: nativeClassToGenerate.compilationItem.with(newKind: .exportedType(.valdiModel(modelToUse), resolvedClassMapping, generatedSourceFilename)))
                 case .viewModel:
-                    if var foundDocumentAndIndexes = items.findDocument(fromSourceURL: nativeClassToGenerate.sourceURL) {
-                        foundDocumentAndIndexes.compilationResult.originalDocument.viewModel = modelToUse
-                        items.replace(atIndex: foundDocumentAndIndexes.itemIndex) { item in
-                            return item.with(newKind: .document(foundDocumentAndIndexes.compilationResult))
+                    // Compose the attach list from two sources so we cover every Component
+                    // that consumes this VM in the current compilation, without introducing
+                    // a false-attach that clobbers an explicit binding elsewhere:
+                    //   1. Bound Components — every `@Component` whose annotation params or
+                    //      sugar-fallback type args named this VM. Always attach.
+                    //   2. Same-file fallback — if a `@ViewModel` was registered in this VM's
+                    //      own file (URL sidecar hit), also attach to that document. Covers
+                    //      the pre-PR behavior: same-file `@Component` classes that use a
+                    //      custom base class (not in ComponentBaseRegistry) bind their VM
+                    //      via same-file convention rather than the reverse-lookup map.
+                    var vmAttachURLs = self.componentInfos(forViewModelKey: classKey)
+                        .map { $0.componentSourceURL }
+                    let vmHasSameFileAnnotation = self.isRegisteredViewModel(sourceURL: nativeClassToGenerate.sourceURL, symbolName: nativeClassToGenerate.dumpedSymbol.text)
+                    if vmHasSameFileAnnotation, !vmAttachURLs.contains(nativeClassToGenerate.sourceURL) {
+                        vmAttachURLs.append(nativeClassToGenerate.sourceURL)
+                    }
+
+                    var vmAttached = false
+                    for attachURL in vmAttachURLs {
+                        if var foundDocumentAndIndexes = items.findDocument(fromSourceURL: attachURL) {
+                            if foundDocumentAndIndexes.compilationResult.originalDocument.viewModel != nil {
+                                // Some earlier attach in this same VM's iteration already
+                                // wrote here (via a bound Component). Don't overwrite.
+                                vmAttached = true
+                                continue
+                            }
+                            foundDocumentAndIndexes.compilationResult.originalDocument.viewModel = modelToUse
+                            items.replace(atIndex: foundDocumentAndIndexes.itemIndex) { item in
+                                return item.with(newKind: .document(foundDocumentAndIndexes.compilationResult))
+                            }
+                            vmAttached = true
                         }
-                    } else {
+                    }
+                    if !vmAttached {
                         items.append(item: nativeClassToGenerate.compilationItem.with(newKind: .exportedType(.valdiModel(modelToUse), resolvedClassMapping, generatedSourceFilename)))
                     }
                 case .context:
-                    if var foundDocumentAndIndexes = items.findDocument(fromSourceURL: nativeClassToGenerate.sourceURL) {
-                        foundDocumentAndIndexes.compilationResult.originalDocument.componentContext = ValdiNodeClassMapping(
-                            tsType: modelToUse.tsType,
-                            iosType: modelToUse.iosType,
-                            androidClassName: modelToUse.androidClassName,
-                            cppType: modelToUse.cppType,
-                            kind: .class)
+                    var ctxAttachURLs = self.componentInfos(forContextKey: classKey)
+                        .map { $0.componentSourceURL }
+                    let ctxHasSameFileAnnotation = self.isRegisteredContext(sourceURL: nativeClassToGenerate.sourceURL, symbolName: nativeClassToGenerate.dumpedSymbol.text)
+                    if ctxHasSameFileAnnotation, !ctxAttachURLs.contains(nativeClassToGenerate.sourceURL) {
+                        ctxAttachURLs.append(nativeClassToGenerate.sourceURL)
+                    }
 
-                        items.replace(atIndex: foundDocumentAndIndexes.itemIndex) { item in
-                            return item.with(newKind: .document(foundDocumentAndIndexes.compilationResult))
+                    for attachURL in ctxAttachURLs {
+                        if var foundDocumentAndIndexes = items.findDocument(fromSourceURL: attachURL) {
+                            if foundDocumentAndIndexes.compilationResult.originalDocument.componentContext != nil {
+                                continue
+                            }
+                            foundDocumentAndIndexes.compilationResult.originalDocument.componentContext = ValdiNodeClassMapping(
+                                tsType: modelToUse.tsType,
+                                iosType: modelToUse.iosType,
+                                androidClassName: modelToUse.androidClassName,
+                                cppType: modelToUse.cppType,
+                                kind: .class)
+
+                            items.replace(atIndex: foundDocumentAndIndexes.itemIndex) { item in
+                                return item.with(newKind: .document(foundDocumentAndIndexes.compilationResult))
+                            }
                         }
                     }
 
@@ -628,7 +777,7 @@ class NativeCodeGenerationManager {
                                            kind: NativeTypeKind,
                                            isComponent: Bool) throws -> NativeClassToGenerate {
 
-        let symbol = annotatedSymbol.symbol
+        var symbol = annotatedSymbol.symbol
         // TODO: extract validation from this function?
         switch kind {
         case .class, .interface:
@@ -637,10 +786,42 @@ class NativeCodeGenerationManager {
                 try throwAnnotationError(annotation, commentedFile, message: "@ExportModel or @ExportProxy must be set on an interface or class")
             }
 
+            let hasSupertypes = (symbol.interface?.supertypes?.count ?? 0) > 0
             let ignoreInheritance = annotation.parameters?["ignoreInheritance"] == "true"
 
-            guard ignoreInheritance || isComponent || (symbol.interface?.supertypes?.count ?? 0) == 0 else {
-                try throwAnnotationError(annotation, commentedFile, message: "@ExportModel or @ExportProxy can only be used on types without inheritance")
+            if ignoreInheritance {
+                logger.warn("`ignoreInheritance` on @ExportModel / @ExportProxy is deprecated. Interface inheritance is now flattened automatically; remove the parameter (and `extends` if the parent's members should not appear in the generated native class).")
+            }
+
+            if hasSupertypes && !ignoreInheritance {
+                if symbol.kind == TS.SyntaxKind.interfaceDeclaration {
+                    // Interfaces get their `extends` chain flattened into a single member list.
+                    guard let index = interfaceFlattenerIndex else {
+                        try throwAnnotationError(annotation, commentedFile, message: "Interface flattener index is unavailable — this is a compiler bug (setInterfaceFlattenerIndex was not called before annotation processing).")
+                    }
+                    guard let originalInterface = symbol.interface else {
+                        try throwAnnotationError(annotation, commentedFile, message: "Interface data missing for '\(symbol.text)'.")
+                    }
+
+                    let collisionPolicy = InterfaceInheritanceCollisionPolicy.parse(annotationValue: annotation.parameters?["inheritanceCollisionPolicy"])
+
+                    do {
+                        let flattened = try InterfaceFlattener.flatten(
+                            interface: originalInterface,
+                            fileName: commentedFile.src.compilationPath,
+                            references: commentedFile.references,
+                            mergeReference: { ref in commentedFile.appendReferenceIfNeeded(ref) },
+                            index: index,
+                            collisionPolicy: collisionPolicy)
+                        symbol.interface = flattened
+                    } catch let error {
+                        try throwAnnotationError(annotation, commentedFile, message: "Failed to flatten inherited members for '\(symbol.text)': \(error.legibleLocalizedDescription)")
+                    }
+                } else if !isComponent {
+                    // Classes still can't be flattened (they carry runtime behavior, not just members).
+                    // Components are exempt because they legitimately extend `Component<VM, Ctx>`.
+                    try throwAnnotationError(annotation, commentedFile, message: "@ExportModel or @ExportProxy on a class cannot use inheritance (except when the class is a @Component).")
+                }
             }
 
         case .enum, .stringEnum:

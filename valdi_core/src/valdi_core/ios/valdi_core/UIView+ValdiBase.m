@@ -45,6 +45,25 @@ static BOOL SCValdiLayerHasAnimation(CALayer *layer)
     return self.class == [UIView class];
 }
 
+- (void)valdi_prepareForPoolReuse
+{
+    // Reset the transform to identity. Valdi sets the CALayer model value to the
+    // animation target before the CAAnimation starts, so a mid-flight cancellation
+    // snaps the layer to a stale position.
+    // CoreAnimation can also keep an animation running internally after
+    // animationDidStop:finished:NO fires on an invisible layer — the key disappears
+    // from animationKeys but the animation keeps running, escaping the guard in
+    // willEnqueueViewToPool.
+    
+    // Remove animations only when animationKeys is already empty so that the
+    // dispatch_async deferral in willEnqueueViewToPool still fires for views with
+    // normal active animations.
+    if (self.layer.animationKeys.count == 0) {
+        [self.layer removeAllAnimations];
+    }
+    self.layer.transform = CATransform3DIdentity;
+}
+
 - (BOOL)requiresLayoutWhenAnimatingBounds
 {
     return YES;
@@ -105,7 +124,7 @@ static BOOL SCValdiLayerHasAnimation(CALayer *layer)
     // - child subviews can have an opportunity to recieve touch events
     // - the view with the highest zIndex has priority
     // - children views that return nil aren't considered
-    auto hitTestRet = SCValdiCallSyncActionWithUIEventAndView(customHitTest, point, event, self);
+    auto hitTestRet = SCValdiCallHitTestActionWithUIEventAndView(customHitTest, point, event, self);
     if (hitTestRet) {
         for (UIView *subview in [self.subviews reverseObjectEnumerator]) {
             CGPoint convertedPoint = [subview convertPoint:point fromView:self];

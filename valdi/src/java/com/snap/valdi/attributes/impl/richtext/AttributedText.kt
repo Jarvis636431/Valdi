@@ -6,6 +6,7 @@ package com.snap.valdi.attributes.impl.richtext
  * where each part has a string content and an associated style.
  */
 import com.snap.valdi.callable.ValdiFunction
+import kotlin.math.abs
 
 interface AttributedText {
     /**
@@ -32,6 +33,12 @@ interface AttributedText {
      * Return the text color for the part at the given index, or null if unspecified.
      */
     fun getColorAtIndex(index: Int): Int?
+
+    /**
+     * Return the text background color for the part at the given index, or null if unspecified.
+     */
+    fun getBackgroundColorAtIndex(index: Int): Int?
+
     fun getOnTapAtIndex(index: Int): ValdiFunction?
     fun getOnLayoutAtIndex(index: Int): ValdiFunction?
 
@@ -52,7 +59,61 @@ interface AttributedText {
     fun hasOutline(): Boolean
 
     /**
+     * Return the number of parts with animation transforms.
+     */
+    fun getAnimationTransformsSize(): Int
+
+    /**
      * Return the image attachment info for the part at the given index, or null if not an image attachment.
      */
     fun getImageAttachmentAtIndex(index: Int): ImageAttachmentInfo?
+
+    /**
+     * Return the inline view attachment info for the part at the given index, or null if not an inline view attachment.
+     */
+    fun getInlineViewAttachmentAtIndex(index: Int): InlineViewAttachmentInfo?
+
+    /**
+     * Return the animation transform for the part at the given index, or null if unspecified.
+     */
+    fun getAnimationTransformAtIndex(index: Int): TextAnimationTransform?
+}
+
+fun AttributedText.hasAnimationTransform(): Boolean {
+    return getAnimationTransformsSize() > 0
+}
+
+fun isRenderableAnimationTransform(animationTransform: TextAnimationTransform?): Boolean {
+    // TODO(CREATE-86642): Define animation-state semantics once in shared Valdi code
+    // (or bridge explicit state from TS) so Android/iOS stop duplicating thresholds.
+    return animationTransform != null &&
+        animationTransform.opacity > 0.01f &&
+        (abs(animationTransform.translationY) > 0.01f ||
+            abs(animationTransform.scale - 1f) > 0.01f ||
+            animationTransform.opacity < 0.999f)
+}
+
+fun isActiveAnimationTransform(animationTransform: TextAnimationTransform?): Boolean {
+    return animationTransform != null &&
+        (abs(animationTransform.translationY) > 0.01f ||
+            abs(animationTransform.scale - 1f) > 0.01f ||
+            abs(animationTransform.opacity - 1f) > 0.001f)
+}
+
+fun AttributedText.hasRenderableAnimationTransform(): Boolean {
+    for (index in 0 until getPartsSize()) {
+        if (isRenderableAnimationTransform(getAnimationTransformAtIndex(index))) {
+            return true
+        }
+    }
+    return false
+}
+
+fun AttributedText.hasActiveAnimationTransform(): Boolean {
+    for (index in 0 until getPartsSize()) {
+        if (isActiveAnimationTransform(getAnimationTransformAtIndex(index))) {
+            return true
+        }
+    }
+    return false
 }

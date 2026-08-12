@@ -9,6 +9,10 @@ on:
       - 'npm_modules/*/package.json'
   workflow_dispatch:
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   detect-changes:
     runs-on: ubuntu-latest
@@ -24,16 +28,27 @@ jobs:
       - name: Check which packages changed
         id: filter
         run: |
-          if git diff HEAD^ HEAD --name-only | grep -q "npm_modules/cli/package.json"; then
-            echo "cli=true" >> $GITHUB_OUTPUT
+          # Publish only when the package's version field actually changed.
+          # Any other edit to package.json (scripts, deps, metadata) would
+          # otherwise trigger a spurious publish of the already-live version.
+          version_changed() {
+            local pkg="$1"
+            local old new
+            old=$(git show "HEAD^:$pkg" 2>/dev/null | jq -r '.version' 2>/dev/null || true)
+            new=$(git show "HEAD:$pkg" 2>/dev/null | jq -r '.version' 2>/dev/null || true)
+            [ -n "$new" ] && [ "$new" != "null" ] && [ "$old" != "$new" ]
+          }
+
+          if version_changed "npm_modules/cli/package.json"; then
+            echo "cli=true" >> "$GITHUB_OUTPUT"
           else
-            echo "cli=false" >> $GITHUB_OUTPUT
+            echo "cli=false" >> "$GITHUB_OUTPUT"
           fi
-          
-          if git diff HEAD^ HEAD --name-only | grep -q "npm_modules/eslint-plugin-valdi/package.json"; then
-            echo "eslint-plugin=true" >> $GITHUB_OUTPUT
+
+          if version_changed "npm_modules/eslint-plugin-valdi/package.json"; then
+            echo "eslint-plugin=true" >> "$GITHUB_OUTPUT"
           else
-            echo "eslint-plugin=false" >> $GITHUB_OUTPUT
+            echo "eslint-plugin=false" >> "$GITHUB_OUTPUT"
           fi
 
   test-cli:
@@ -73,12 +88,21 @@ jobs:
     name: Build bootstrapped app (release test)
     needs: detect-changes
     if: needs.detect-changes.outputs.cli == 'true'
-    runs-on: macos-latest
+    runs-on: macos-26
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Pin Xcode
+        uses: ./.github/actions/pin-xcode
+
+      - name: Configure Bazel cache
+        uses: ./.github/actions/bazel-cache
         with:
-          lfs: true
+          gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          cache_bucket: ${{ vars.BAZEL_CACHE_BUCKET }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -97,13 +121,14 @@ jobs:
           bazel --version
           watchman --version
 
-      - name: Run release test (bootstrap from main, build iOS, test)
+      - name: Run release test (bootstrap with default pinned versions, build iOS, test)
         run: ./tools/ci/release_test.sh
 
   publish-cli:
     needs: [detect-changes, test-cli, test-cli-build]
     if: needs.detect-changes.outputs.cli == 'true'
     runs-on: ubuntu-latest
+    environment: npm-publish
     defaults:
       run:
         working-directory: npm_modules/cli
@@ -114,8 +139,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           registry-url: 'https://registry.npmjs.org'
+
+      - name: Upgrade npm for trusted publishing (requires >=11.5.1)
+        run: npm install -g npm@11 && npm --version
 
       - name: Install dependencies
         run: npm ci
@@ -124,14 +152,13 @@ jobs:
         run: npm run build
 
       - name: Publish @snap/valdi to npm
-        run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance
 
   publish-eslint-plugin:
     needs: detect-changes
     if: needs.detect-changes.outputs.eslint-plugin == 'true'
     runs-on: ubuntu-latest
+    environment: npm-publish
     defaults:
       run:
         working-directory: npm_modules/eslint-plugin-valdi
@@ -142,8 +169,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           registry-url: 'https://registry.npmjs.org'
+
+      - name: Upgrade npm for trusted publishing (requires >=11.5.1)
+        run: npm install -g npm@11 && npm --version
 
       - name: Install dependencies
         run: npm ci
@@ -152,7 +182,5 @@ jobs:
         run: npm run build
 
       - name: Publish @snap/eslint-plugin-valdi to npm
-        run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance
 

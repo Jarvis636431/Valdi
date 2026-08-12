@@ -1,4 +1,5 @@
 #include "ViewNodeTestsUtils.hpp"
+#include "valdi/runtime/Attributes/ViewNodeTextInlineAttachment.hpp"
 #include "gtest/gtest.h"
 
 using namespace Valdi;
@@ -15,6 +16,31 @@ void assertAllFlagsAreUpToDate(ViewNode* viewNode) {
     for (auto* child : *viewNode) {
         assertAllFlagsAreUpToDate(child);
     }
+}
+
+static Ref<ViewNode> createManagedChildFrameNode(ViewNodeTestsDependencies& utils) {
+    auto viewNode = utils.createNode("ManagedChildFrameView");
+    auto viewFactory = viewNode->getViewFactory();
+    viewFactory->setManagesChildFrames(true);
+    viewNode->setViewFactory(utils.getViewTransactionScope(), nullptr);
+    viewNode->setViewFactory(utils.getViewTransactionScope(), viewFactory);
+    return viewNode;
+}
+
+TEST(ViewNode, classChangePrunesDirtyCompositeAttributes) {
+    ViewNodeTestsDependencies utils;
+    utils.getViewManager().setRegisterCustomAttributes(true);
+
+    auto viewNode = utils.createNode("UIRectangleView");
+    utils.setViewNodeAttribute(viewNode, "left", Value(10.0));
+
+    ASSERT_TRUE(viewNode->getAttributesApplier().needsFlush());
+
+    // Platform class attributes use this same setter in production; this fixture has no ViewManagerContext.
+    viewNode->setViewFactory(utils.getViewTransactionScope(), utils.getViewFactory("SCValdiLabel"));
+
+    EXPECT_FALSE(viewNode->getAttributesApplier().needsFlush());
+    viewNode->getAttributesApplier().flush(utils.getViewTransactionScope());
 }
 
 TEST(ViewNode, canInsertChildren) {
@@ -57,6 +83,184 @@ TEST(ViewNode, canRemoveChildren) {
 
     ASSERT_EQ(1, static_cast<int>(YGNodeGetChildCount(root->getYogaNode())));
     ASSERT_EQ(child2->getYogaNode(), YGNodeGetChild(root->getYogaNode(), 0));
+}
+
+TEST(ViewNode, managedChildFrameParentInsertsChildrenInDetachedYogaNode) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createLayout();
+    auto managedParent = createManagedChildFrameNode(utils);
+    auto child = utils.createView();
+    auto child2 = utils.createView();
+
+    root->appendChild(utils.getViewTransactionScope(), managedParent);
+    managedParent->appendChild(utils.getViewTransactionScope(), child);
+    managedParent->appendChild(utils.getViewTransactionScope(), child2);
+
+    auto* managedChildrenYogaNode = managedParent->getYogaNodeForInsertingChildren();
+    ASSERT_TRUE(managedParent->managesChildFrames());
+    ASSERT_FALSE(managedParent->parentManagesChildFrames());
+    ASSERT_TRUE(child->parentManagesChildFrames());
+    ASSERT_TRUE(child2->parentManagesChildFrames());
+    ASSERT_NE(managedParent->getYogaNode(), managedChildrenYogaNode);
+    ASSERT_EQ(0, static_cast<int>(YGNodeGetChildCount(managedParent->getYogaNode())));
+    ASSERT_EQ(2, static_cast<int>(YGNodeGetChildCount(managedChildrenYogaNode)));
+    ASSERT_EQ(child->getYogaNode(), YGNodeGetChild(managedChildrenYogaNode, 0));
+    ASSERT_EQ(child2->getYogaNode(), YGNodeGetChild(managedChildrenYogaNode, 1));
+    ASSERT_EQ(child.get(), managedParent->getChildAt(0));
+    ASSERT_EQ(child2.get(), managedParent->getChildAt(1));
+    ASSERT_EQ(YGPositionTypeAbsolute, YGNodeStyleGetPositionType(child->getYogaNode()));
+    ASSERT_EQ(YGPositionTypeAbsolute, YGNodeStyleGetPositionType(child2->getYogaNode()));
+}
+
+TEST(ViewNode, reparentingFromManagedChildFrameParentRestoresRegularYogaInsertion) {
+    ViewNodeTestsDependencies utils;
+
+    auto managedParent = createManagedChildFrameNode(utils);
+    auto regularParent = utils.createLayout();
+    auto child = utils.createView();
+
+    managedParent->appendChild(utils.getViewTransactionScope(), child);
+
+    ASSERT_TRUE(child->parentManagesChildFrames());
+    ASSERT_EQ(YGPositionTypeAbsolute, YGNodeStyleGetPositionType(child->getYogaNode()));
+    ASSERT_EQ(child->getYogaNode(), YGNodeGetChild(managedParent->getYogaNodeForInsertingChildren(), 0));
+
+    regularParent->appendChild(utils.getViewTransactionScope(), child);
+
+    ASSERT_FALSE(child->parentManagesChildFrames());
+    ASSERT_EQ(YGPositionTypeRelative, YGNodeStyleGetPositionType(child->getYogaNode()));
+    ASSERT_EQ(0, static_cast<int>(YGNodeGetChildCount(managedParent->getYogaNodeForInsertingChildren())));
+    ASSERT_EQ(1, static_cast<int>(YGNodeGetChildCount(regularParent->getYogaNode())));
+    ASSERT_EQ(child->getYogaNode(), YGNodeGetChild(regularParent->getYogaNode(), 0));
+    ASSERT_EQ(child.get(), regularParent->getChildAt(0));
+}
+
+TEST(ViewNode, removingFromManagedChildFrameParentClearsManagedParentState) {
+    ViewNodeTestsDependencies utils;
+
+    auto managedParent = createManagedChildFrameNode(utils);
+    auto child = utils.createView();
+
+    managedParent->appendChild(utils.getViewTransactionScope(), child);
+
+    ASSERT_TRUE(child->parentManagesChildFrames());
+    ASSERT_EQ(YGPositionTypeAbsolute, YGNodeStyleGetPositionType(child->getYogaNode()));
+
+    child->removeFromParent(utils.getViewTransactionScope());
+
+    ASSERT_FALSE(child->parentManagesChildFrames());
+    ASSERT_EQ(YGPositionTypeRelative, YGNodeStyleGetPositionType(child->getYogaNode()));
+    ASSERT_EQ(0, static_cast<int>(YGNodeGetChildCount(managedParent->getYogaNodeForInsertingChildren())));
+}
+
+TEST(ViewNode, managedChildFrameParentDoesNotBecomeLazyLayout) {
+    ViewNodeTestsDependencies utils;
+
+    auto managedParent = createManagedChildFrameNode(utils);
+    auto child = utils.createView();
+
+    ASSERT_FALSE(managedParent->isLazyLayout());
+    managedParent->setPrefersLazyLayout(utils.getViewTransactionScope(), true);
+
+    ASSERT_TRUE(managedParent->managesChildFrames());
+    ASSERT_FALSE(managedParent->isLazyLayout());
+    ASSERT_NE(managedParent->getYogaNode(), managedParent->getYogaNodeForInsertingChildren());
+
+    managedParent->appendChild(utils.getViewTransactionScope(), child);
+    ASSERT_TRUE(child->parentManagesChildFrames());
+    ASSERT_EQ(YGPositionTypeAbsolute, YGNodeStyleGetPositionType(child->getYogaNode()));
+}
+
+TEST(ViewNode, managedChildFrameParentCalculatesChildrenButDoesNotApplyNativeFrames) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createRootView();
+    auto managedParent = createManagedChildFrameNode(utils);
+    auto child = utils.createView();
+
+    root->appendChild(utils.getViewTransactionScope(), managedParent);
+    managedParent->appendChild(utils.getViewTransactionScope(), child);
+
+    utils.setViewNodeFrame(managedParent, 0, 0, 100, 60);
+    utils.setViewNodeFrame(child, 10, 5, 30, 20);
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    auto managedView = StandaloneView::unwrap(managedParent->getView());
+    auto childView = StandaloneView::unwrap(child->getView());
+
+    ASSERT_TRUE(managedView != nullptr);
+    ASSERT_TRUE(childView != nullptr);
+    ASSERT_EQ(Frame(0, 0, 100, 60), managedParent->getCalculatedFrame());
+    ASSERT_EQ(Frame(10, 5, 30, 20), child->getCalculatedFrame());
+    ASSERT_EQ(Frame(0, 0, 100, 60), managedView->getFrame());
+    ASSERT_EQ(Frame(), childView->getFrame());
+}
+
+TEST(ViewNode, managedChildFrameParentInvalidatesViewLayoutWhenChildrenLayoutIsCalculated) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createRootView();
+    auto managedParent = createManagedChildFrameNode(utils);
+    auto child = utils.createView();
+
+    root->appendChild(utils.getViewTransactionScope(), managedParent);
+    managedParent->appendChild(utils.getViewTransactionScope(), child);
+
+    utils.setViewNodeFrame(managedParent, 0, 0, 100, 60);
+    utils.setViewNodeFrame(child, 10, 5, 30, 20);
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    auto managedView = StandaloneView::unwrap(managedParent->getView());
+    ASSERT_TRUE(managedView != nullptr);
+    auto invalidateLayoutCountBeforeLayout = managedView->getInvalidateLayoutCount();
+
+    utils.setViewNodeAttribute(child, "width", Value(45.0));
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+
+    ASSERT_EQ(invalidateLayoutCountBeforeLayout + 1, managedView->getInvalidateLayoutCount());
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+
+    ASSERT_EQ(invalidateLayoutCountBeforeLayout + 1, managedView->getInvalidateLayoutCount());
+}
+
+TEST(ViewNode, dirtyManagedChildrenYogaNodeInvalidatesManagedParentMeasurement) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createRootView();
+    auto managedParent = createManagedChildFrameNode(utils);
+    auto child = utils.createView();
+
+    root->appendChild(utils.getViewTransactionScope(), managedParent);
+    managedParent->appendChild(utils.getViewTransactionScope(), child);
+
+    utils.setViewNodeFrame(managedParent, 0, 0, 100, 60);
+    utils.setViewNodeFrame(child, 10, 5, 30, 20);
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_FALSE(root->isFlexLayoutDirty());
+    ASSERT_FALSE(managedParent->isFlexLayoutDirty());
+
+    utils.setViewNodeAttribute(child, "width", Value(45.0));
+
+    ASSERT_TRUE(managedParent->isFlexLayoutDirty());
+    ASSERT_TRUE(root->isFlexLayoutDirty());
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    auto childView = StandaloneView::unwrap(child->getView());
+    ASSERT_EQ(Frame(10, 5, 45, 20), child->getCalculatedFrame());
+    ASSERT_TRUE(childView != nullptr);
+    ASSERT_EQ(Frame(), childView->getFrame());
 }
 
 TEST(ViewNode, canIterateOverChildren) {
@@ -401,6 +605,68 @@ TEST(ViewNode, supportsAllMeasureModes) {
     ASSERT_EQ(30.0f, size.height);
 }
 
+TEST(ViewNode, supportsGap) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createRootView();
+    auto child1 = utils.createView();
+    auto child2 = utils.createView();
+    auto child3 = utils.createView();
+
+    utils.setViewNodeAttribute(root, "flexDirection", Value(STRING_LITERAL("row")));
+    utils.setViewNodeAttribute(root, "gap", Value(5.0));
+
+    utils.setViewNodeAttribute(child1, "width", Value(10.0));
+    utils.setViewNodeAttribute(child1, "height", Value(5.0));
+
+    utils.setViewNodeAttribute(child2, "width", Value(20.0));
+    utils.setViewNodeAttribute(child2, "height", Value(10.0));
+
+    utils.setViewNodeAttribute(child3, "width", Value(20.0));
+    utils.setViewNodeAttribute(child3, "height", Value(15.0));
+
+    root->appendChild(utils.getViewTransactionScope(), child1);
+    root->appendChild(utils.getViewTransactionScope(), child2);
+    root->appendChild(utils.getViewTransactionScope(), child3);
+
+    auto size = root->measureLayout(100, MeasureModeUnspecified, 100, MeasureModeUnspecified, LayoutDirectionLTR);
+
+    ASSERT_EQ(60.0f, size.width);
+    ASSERT_EQ(15.0f, size.height);
+}
+
+TEST(ViewNode, supportsRowAndColumnGap) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createRootView();
+    auto child1 = utils.createView();
+    auto child2 = utils.createView();
+    auto child3 = utils.createView();
+
+    utils.setViewNodeAttribute(root, "flexDirection", Value(STRING_LITERAL("row")));
+    utils.setViewNodeAttribute(root, "flexWrap", Value(STRING_LITERAL("wrap")));
+    utils.setViewNodeAttribute(root, "columnGap", Value(5.0));
+    utils.setViewNodeAttribute(root, "rowGap", Value(7.0));
+
+    utils.setViewNodeAttribute(child1, "width", Value(10.0));
+    utils.setViewNodeAttribute(child1, "height", Value(5.0));
+
+    utils.setViewNodeAttribute(child2, "width", Value(20.0));
+    utils.setViewNodeAttribute(child2, "height", Value(10.0));
+
+    utils.setViewNodeAttribute(child3, "width", Value(20.0));
+    utils.setViewNodeAttribute(child3, "height", Value(15.0));
+
+    root->appendChild(utils.getViewTransactionScope(), child1);
+    root->appendChild(utils.getViewTransactionScope(), child2);
+    root->appendChild(utils.getViewTransactionScope(), child3);
+
+    auto size = root->measureLayout(35, MeasureModeExactly, 100, MeasureModeUnspecified, LayoutDirectionLTR);
+
+    ASSERT_EQ(35.0f, size.width);
+    ASSERT_EQ(32.0f, size.height);
+}
+
 TEST(ViewNode, canCalculateViewport) {
     ViewNodeTestsDependencies utils;
 
@@ -610,6 +876,558 @@ TEST(ViewNode, canExtendViewportWithChildren) {
     ASSERT_TRUE(container->isVisibleInViewport());
     ASSERT_TRUE(child->isVisibleInViewport());
     ASSERT_EQ(Frame(0, 0, 160, 170), container->getCalculatedViewport());
+}
+
+TEST(ViewNode, scaleTransformAffectsViewportIntersection) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createLayout();
+    auto container = utils.createLayout();
+    auto child = utils.createLayout();
+
+    // child frame (100..150 x 0..50) is outside container (0..100 x 0..100)
+    utils.setViewNodeFrame(container, 0, 0, 100, 100);
+    utils.setViewNodeFrame(child, 100, 0, 50, 50);
+
+    root->appendChild(utils.getViewTransactionScope(), container);
+    container->appendChild(utils.getViewTransactionScope(), child);
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_FALSE(child->isVisibleInViewport());
+
+    // Scale 3x from center: child center x=125, scaled left = 125 - 75 = 50, which overlaps 0..100
+    child->setScaleX(3.0f);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+    ASSERT_TRUE(child->isVisibleInViewport());
+
+    // Reset scale — should be invisible again
+    child->setScaleX(1.0f);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+    ASSERT_FALSE(child->isVisibleInViewport());
+}
+
+TEST(ViewNode, scaleYTransformAffectsViewportIntersection) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createLayout();
+    auto container = utils.createLayout();
+    auto child = utils.createLayout();
+
+    // child frame (0..50 x 100..150) is outside container (0..100 x 0..100)
+    utils.setViewNodeFrame(container, 0, 0, 100, 100);
+    utils.setViewNodeFrame(child, 0, 100, 50, 50);
+
+    root->appendChild(utils.getViewTransactionScope(), container);
+    container->appendChild(utils.getViewTransactionScope(), child);
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_FALSE(child->isVisibleInViewport());
+
+    // Scale 3x from center: child center y=125, scaled top = 125 - 75 = 50, which overlaps 0..100
+    child->setScaleY(3.0f);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+    ASSERT_TRUE(child->isVisibleInViewport());
+
+    child->setScaleY(1.0f);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+    ASSERT_FALSE(child->isVisibleInViewport());
+}
+
+TEST(ViewNode, positiveScaleXOnContainerCorrectlyClipsChildren) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createLayout();
+    auto container = utils.createLayout();
+    auto childIn = utils.createLayout();
+    auto childOut = utils.createLayout();
+
+    // Container: 400 wide (2x viewport). Viewport: 200x200.
+    // scaleX=2 expands container to visual width 800, centered at x=200.
+    // Visible local range: x=100..200 (viewport 0..200 maps to local /2 = 0..100
+    // offset into the clip rect, which starts at bounds.x-subtracted 200, giving 100..200).
+    utils.setViewNodeFrame(container, 0, 0, 400, 200);
+    // childIn at local x=150..200: visual x=100..200 — inside the viewport.
+    utils.setViewNodeFrame(childIn, 150, 0, 50, 200);
+    // childOut at local x=210..260: visual x=220..320 — outside the viewport.
+    utils.setViewNodeFrame(childOut, 210, 0, 50, 200);
+
+    root->appendChild(utils.getViewTransactionScope(), container);
+    container->appendChild(utils.getViewTransactionScope(), childIn);
+    container->appendChild(utils.getViewTransactionScope(), childOut);
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    // Without scale: clip is local 0..200. childIn visible, childOut not.
+    ASSERT_TRUE(childIn->isVisibleInViewport());
+    ASSERT_FALSE(childOut->isVisibleInViewport());
+
+    container->setScaleX(2.0f);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    // With scaleX=2: clip rect must be divided by 2 to give local 100..200.
+    // childIn (150..200) intersects; childOut (210..260) does not.
+    ASSERT_TRUE(childIn->isVisibleInViewport());
+    ASSERT_FALSE(childOut->isVisibleInViewport());
+}
+
+TEST(ViewNode, positiveScaleYOnContainerCorrectlyClipsChildren) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createLayout();
+    auto container = utils.createLayout();
+    auto childIn = utils.createLayout();
+    auto childOut = utils.createLayout();
+
+    // Container: 400 tall (2x viewport). Viewport: 200x200.
+    // scaleY=2 expands container to visual height 800, centered at y=200.
+    // Visible local range: y=100..200.
+    utils.setViewNodeFrame(container, 0, 0, 200, 400);
+    utils.setViewNodeFrame(childIn, 0, 150, 200, 50);  // local y=150..200: visual 100..200 ✓
+    utils.setViewNodeFrame(childOut, 0, 210, 200, 50); // local y=210..260: visual 220..320 ✗
+
+    root->appendChild(utils.getViewTransactionScope(), container);
+    container->appendChild(utils.getViewTransactionScope(), childIn);
+    container->appendChild(utils.getViewTransactionScope(), childOut);
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_TRUE(childIn->isVisibleInViewport());
+    ASSERT_FALSE(childOut->isVisibleInViewport());
+
+    container->setScaleY(2.0f);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_TRUE(childIn->isVisibleInViewport());
+    ASSERT_FALSE(childOut->isVisibleInViewport());
+}
+
+TEST(ViewNode, negativeScaleYOnContainerMovesBottomChildIntoViewport) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createLayout();
+    auto container = utils.createLayout();
+    auto child = utils.createLayout();
+
+    // Viewport: 200x200.
+    // Container: 200 wide, 400 tall (2x viewport height), at origin.
+    // Child: anchored to the bottom of the container (y=350, h=50).
+    // Without any transform, the child (y=350..400) is fully below the
+    // viewport (0..200) so it should not produce a native view.
+    utils.setViewNodeFrame(container, 0, 0, 200, 400);
+    utils.setViewNodeFrame(child, 0, 350, 200, 50);
+
+    root->appendChild(utils.getViewTransactionScope(), container);
+    container->appendChild(utils.getViewTransactionScope(), child);
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_TRUE(container->isVisibleInViewport());
+    ASSERT_FALSE(child->isVisibleInViewport());
+
+    // scaleY=-1 flips the container around its vertical center (y=200).
+    // The child at local y=350..400 maps to visual y=0..50 — at the top of
+    // the viewport. Both the container and the child must be marked visible
+    // so that native views are produced for them.
+    container->setScaleY(-1.0f);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_TRUE(container->isVisibleInViewport());
+    ASSERT_TRUE(child->isVisibleInViewport());
+}
+
+TEST(ViewNode, negativeScaleXOnContainerMovesRightChildIntoViewport) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createLayout();
+    auto container = utils.createLayout();
+    auto child = utils.createLayout();
+
+    // Viewport: 200x200.
+    // Container: 400 wide (2x viewport width), 200 tall, at origin.
+    // Child: anchored to the right side of the container (x=350, w=50).
+    // Without any transform, the child (x=350..400) is fully past the
+    // viewport (0..200) so it should not produce a native view.
+    utils.setViewNodeFrame(container, 0, 0, 400, 200);
+    utils.setViewNodeFrame(child, 350, 0, 50, 200);
+
+    root->appendChild(utils.getViewTransactionScope(), container);
+    container->appendChild(utils.getViewTransactionScope(), child);
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_TRUE(container->isVisibleInViewport());
+    ASSERT_FALSE(child->isVisibleInViewport());
+
+    // scaleX=-1 flips the container around its horizontal center (x=200).
+    // The child at local x=350..400 maps to visual x=0..50 — at the left
+    // of the viewport. Both the container and the child must be visible.
+    container->setScaleX(-1.0f);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_TRUE(container->isVisibleInViewport());
+    ASSERT_TRUE(child->isVisibleInViewport());
+}
+
+TEST(ViewNode, negativeScaleXFlipsChildOutOfViewport) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createLayout();
+    auto container = utils.createLayout();
+    auto child = utils.createLayout();
+
+    // Container: 400 wide, 200 tall. Viewport: 200x200.
+    // Child on the left side (x=0..50) — normally visible.
+    utils.setViewNodeFrame(container, 0, 0, 400, 200);
+    utils.setViewNodeFrame(child, 0, 0, 50, 200);
+
+    root->appendChild(utils.getViewTransactionScope(), container);
+    container->appendChild(utils.getViewTransactionScope(), child);
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_TRUE(child->isVisibleInViewport());
+
+    // scaleX=-1: child at local x=0..50 maps to visual x=350..400 — past
+    // the viewport edge. It should no longer produce a native view.
+    container->setScaleX(-1.0f);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_FALSE(child->isVisibleInViewport());
+}
+
+TEST(ViewNode, negativeScaleYFlipsChildOutOfViewport) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createLayout();
+    auto container = utils.createLayout();
+    auto child = utils.createLayout();
+
+    // Container: 200 wide, 400 tall. Viewport: 200x200.
+    // Child at the top (y=0..50) — normally visible.
+    utils.setViewNodeFrame(container, 0, 0, 200, 400);
+    utils.setViewNodeFrame(child, 0, 0, 200, 50);
+
+    root->appendChild(utils.getViewTransactionScope(), container);
+    container->appendChild(utils.getViewTransactionScope(), child);
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_TRUE(child->isVisibleInViewport());
+
+    // scaleY=-1: child at local y=0..50 maps to visual y=350..400 — below
+    // the viewport edge. It should no longer produce a native view.
+    container->setScaleY(-1.0f);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_FALSE(child->isVisibleInViewport());
+}
+
+TEST(ViewNode, negativeScaleXAndScaleYMovesBottomRightChildIntoViewport) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createLayout();
+    auto container = utils.createLayout();
+    auto child = utils.createLayout();
+
+    // Viewport: 200x200.
+    // Container: 400x400 (2x viewport in both dims), at origin.
+    // Child: bottom-right corner (x=350, y=350, 50x50) — fully outside viewport.
+    utils.setViewNodeFrame(container, 0, 0, 400, 400);
+    utils.setViewNodeFrame(child, 350, 350, 50, 50);
+
+    root->appendChild(utils.getViewTransactionScope(), container);
+    container->appendChild(utils.getViewTransactionScope(), child);
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_TRUE(container->isVisibleInViewport());
+    ASSERT_FALSE(child->isVisibleInViewport());
+
+    // scaleX=-1, scaleY=-1 flips both axes around the container center (200,200).
+    // The child at local (350..400, 350..400) maps to visual (0..50, 0..50) —
+    // top-left corner of the viewport.
+    container->setScaleX(-1.0f);
+    container->setScaleY(-1.0f);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_TRUE(container->isVisibleInViewport());
+    ASSERT_TRUE(child->isVisibleInViewport());
+}
+
+TEST(ViewNode, negativeScaleXAndScaleYFlipsTopLeftChildOutOfViewport) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createLayout();
+    auto container = utils.createLayout();
+    auto child = utils.createLayout();
+
+    // Container: 400x400. Viewport: 200x200.
+    // Child at top-left (0,0,50,50) — normally visible.
+    utils.setViewNodeFrame(container, 0, 0, 400, 400);
+    utils.setViewNodeFrame(child, 0, 0, 50, 50);
+
+    root->appendChild(utils.getViewTransactionScope(), container);
+    container->appendChild(utils.getViewTransactionScope(), child);
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_TRUE(child->isVisibleInViewport());
+
+    // scaleX=-1, scaleY=-1: child at local (0..50, 0..50) maps to visual
+    // (350..400, 350..400) — outside the viewport.
+    container->setScaleX(-1.0f);
+    container->setScaleY(-1.0f);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_FALSE(child->isVisibleInViewport());
+}
+
+TEST(ViewNode, negativeHalfScaleXOnContainerMovesRightChildIntoViewport) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createLayout();
+    auto container = utils.createLayout();
+    auto child = utils.createLayout();
+
+    // Container: 400 wide (2x viewport), 200 tall. Viewport: 200x200.
+    // Child: right side x=300..400 — outside the viewport.
+    utils.setViewNodeFrame(container, 0, 0, 400, 200);
+    utils.setViewNodeFrame(child, 300, 0, 100, 200);
+
+    root->appendChild(utils.getViewTransactionScope(), container);
+    container->appendChild(utils.getViewTransactionScope(), child);
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_TRUE(container->isVisibleInViewport());
+    ASSERT_FALSE(child->isVisibleInViewport());
+
+    // scaleX=-0.5: flip + shrink. Container visual bounds = x:100..300, half-size.
+    // Viewport (0..200) maps to local x:200..400. Child at x=300..400 is inside
+    // that range — visual center at x=125, visual frame x=100..150.
+    container->setScaleX(-0.5f);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_TRUE(container->isVisibleInViewport());
+    ASSERT_TRUE(child->isVisibleInViewport());
+}
+
+TEST(ViewNode, negativeHalfScaleXFlipsLeftChildOutOfViewport) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createLayout();
+    auto container = utils.createLayout();
+    auto child = utils.createLayout();
+
+    // Container: 400 wide, 200 tall. Viewport: 200x200.
+    // Child: left side x=0..100 — normally visible.
+    utils.setViewNodeFrame(container, 0, 0, 400, 200);
+    utils.setViewNodeFrame(child, 0, 0, 100, 200);
+
+    root->appendChild(utils.getViewTransactionScope(), container);
+    container->appendChild(utils.getViewTransactionScope(), child);
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_TRUE(child->isVisibleInViewport());
+
+    // scaleX=-0.5: viewport (0..200) maps to local x:200..400. Child at x=0..100
+    // falls outside that range — visual frame is at x=250..300, past the viewport.
+    container->setScaleX(-0.5f);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_FALSE(child->isVisibleInViewport());
+}
+
+TEST(ViewNode, negativeTwoScaleXOnContainerMovesChildIntoViewport) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createLayout();
+    auto container = utils.createLayout();
+    auto child = utils.createLayout();
+
+    // Container: 400 wide, 200 tall. Viewport: 200x200.
+    // Child: just past the unscaled viewport edge, x=220..270.
+    utils.setViewNodeFrame(container, 0, 0, 400, 200);
+    utils.setViewNodeFrame(child, 220, 0, 50, 200);
+
+    root->appendChild(utils.getViewTransactionScope(), container);
+    container->appendChild(utils.getViewTransactionScope(), child);
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_TRUE(container->isVisibleInViewport());
+    ASSERT_FALSE(child->isVisibleInViewport());
+
+    // scaleX=-2: flip + double-size. Viewport (0..200) maps to local x:200..300.
+    // Child at x=220..270 is inside that range — visual center at x=110,
+    // visual frame x=60..160, inside the viewport.
+    container->setScaleX(-2.0f);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_TRUE(container->isVisibleInViewport());
+    ASSERT_TRUE(child->isVisibleInViewport());
+}
+
+TEST(ViewNode, negativeTwoScaleXFlipsChildOutOfViewport) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createLayout();
+    auto container = utils.createLayout();
+    auto child = utils.createLayout();
+
+    // Container: 400 wide, 200 tall. Viewport: 200x200.
+    // Child: x=50..100 — normally visible.
+    utils.setViewNodeFrame(container, 0, 0, 400, 200);
+    utils.setViewNodeFrame(child, 50, 0, 50, 200);
+
+    root->appendChild(utils.getViewTransactionScope(), container);
+    container->appendChild(utils.getViewTransactionScope(), child);
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_TRUE(child->isVisibleInViewport());
+
+    // scaleX=-2: viewport maps to local x:200..300. Child at x=50..100 is outside
+    // that range — visual center at x=450, visual frame x=400..500, past the viewport.
+    container->setScaleX(-2.0f);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_FALSE(child->isVisibleInViewport());
+}
+
+TEST(ViewNode, negativeHalfScaleYOnContainerMovesBottomChildIntoViewport) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createLayout();
+    auto container = utils.createLayout();
+    auto child = utils.createLayout();
+
+    // Container: 200 wide, 400 tall (2x viewport). Viewport: 200x200.
+    // Child: bottom portion y=300..400 — outside the viewport.
+    utils.setViewNodeFrame(container, 0, 0, 200, 400);
+    utils.setViewNodeFrame(child, 0, 300, 200, 100);
+
+    root->appendChild(utils.getViewTransactionScope(), container);
+    container->appendChild(utils.getViewTransactionScope(), child);
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_TRUE(container->isVisibleInViewport());
+    ASSERT_FALSE(child->isVisibleInViewport());
+
+    // scaleY=-0.5: flip + shrink. Container visual bounds = y:100..300, half-size.
+    // Viewport (0..200) maps to local y:200..400. Child at y=300..400 is inside
+    // that range — visual center at y=125, visual frame y=100..150.
+    container->setScaleY(-0.5f);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_TRUE(container->isVisibleInViewport());
+    ASSERT_TRUE(child->isVisibleInViewport());
+}
+
+TEST(ViewNode, negativeHalfScaleYFlipsTopChildOutOfViewport) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createLayout();
+    auto container = utils.createLayout();
+    auto child = utils.createLayout();
+
+    // Container: 200 wide, 400 tall. Viewport: 200x200.
+    // Child: top portion y=0..100 — normally visible.
+    utils.setViewNodeFrame(container, 0, 0, 200, 400);
+    utils.setViewNodeFrame(child, 0, 0, 200, 100);
+
+    root->appendChild(utils.getViewTransactionScope(), container);
+    container->appendChild(utils.getViewTransactionScope(), child);
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_TRUE(child->isVisibleInViewport());
+
+    // scaleY=-0.5: viewport (0..200) maps to local y:200..400. Child at y=0..100
+    // falls outside that range — visual frame is at y=250..300, past the viewport.
+    container->setScaleY(-0.5f);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_FALSE(child->isVisibleInViewport());
+}
+
+TEST(ViewNode, negativeTwoScaleYOnContainerMovesChildIntoViewport) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createLayout();
+    auto container = utils.createLayout();
+    auto child = utils.createLayout();
+
+    // Container: 200 wide, 400 tall. Viewport: 200x200.
+    // Child: just past the unscaled viewport edge, y=220..270.
+    utils.setViewNodeFrame(container, 0, 0, 200, 400);
+    utils.setViewNodeFrame(child, 0, 220, 200, 50);
+
+    root->appendChild(utils.getViewTransactionScope(), container);
+    container->appendChild(utils.getViewTransactionScope(), child);
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_TRUE(container->isVisibleInViewport());
+    ASSERT_FALSE(child->isVisibleInViewport());
+
+    // scaleY=-2: flip + double-size. Viewport (0..200) maps to local y:200..300.
+    // Child at y=220..270 is inside that range — visual center at y=110,
+    // visual frame y=60..160, inside the viewport.
+    container->setScaleY(-2.0f);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_TRUE(container->isVisibleInViewport());
+    ASSERT_TRUE(child->isVisibleInViewport());
+}
+
+TEST(ViewNode, negativeTwoScaleYFlipsChildOutOfViewport) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createLayout();
+    auto container = utils.createLayout();
+    auto child = utils.createLayout();
+
+    // Container: 200 wide, 400 tall. Viewport: 200x200.
+    // Child: y=50..100 — normally visible.
+    utils.setViewNodeFrame(container, 0, 0, 200, 400);
+    utils.setViewNodeFrame(child, 0, 50, 200, 50);
+
+    root->appendChild(utils.getViewTransactionScope(), container);
+    container->appendChild(utils.getViewTransactionScope(), child);
+
+    root->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_TRUE(child->isVisibleInViewport());
+
+    // scaleY=-2: viewport maps to local y:200..300. Child at y=50..100 is outside
+    // that range — visual center at y=450, visual frame y=400..500, past the viewport.
+    container->setScaleY(-2.0f);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    ASSERT_FALSE(child->isVisibleInViewport());
 }
 
 TEST(ViewNode, supportsIgnoreParentViewport) {
@@ -2451,6 +3269,155 @@ TEST(ViewNode, supportsOnMeasureCallback) {
     ASSERT_EQ(Frame(0, 0, 30, 30), root->getCalculatedFrame());
     ASSERT_EQ(Frame(0, 0, 30, 30), container->getCalculatedFrame());
     ASSERT_EQ(Frame(8, 8, 14, 14), child->getCalculatedFrame());
+}
+
+// A text label must size its own node to measured-content + horizontal padding. `padding` is a
+// children-node attribute, so on a node that managesChildFrames it is routed to the detached child
+// container rather than the node's own measuring yoga node -- and horizontal padding then stops
+// widening the node. PR #107 made the platform label view managesChildFrames, so a padded single-line
+// label lays out at ~text width and its pill renders cramped. The managesChildFrames flag governs
+// child-frame management; it must not change how the node's own padding widens it. This pins that
+// invariant against a plain label as the oracle.
+TEST(ViewNode, managesChildFramesLabelAppliesOwnHorizontalPadding) {
+    ViewNodeTestsDependencies utils;
+
+    // Control: a plain Label leaf. `padding` lands on its own measuring node, so Yoga widens it.
+    auto plainRoot = utils.createRootView();
+    auto plainLabel = utils.createNode("Label");
+    plainRoot->appendChild(utils.getViewTransactionScope(), plainLabel);
+    // flex-start so the label is sized to its content (+ padding), not stretched to the root width.
+    utils.setViewNodeAttribute(plainRoot, "alignItems", Value(STRING_LITERAL("flex-start")));
+    plainRoot->getAttributesApplier().flush(utils.getViewTransactionScope());
+    utils.setViewNodeAttribute(plainLabel, "value", Value(STRING_LITERAL("New")));
+    utils.setViewNodeAttribute(plainLabel, "paddingLeft", Value(8.0));
+    utils.setViewNodeAttribute(plainLabel, "paddingRight", Value(8.0));
+    plainLabel->getAttributesApplier().flush(utils.getViewTransactionScope());
+    plainRoot->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    plainRoot->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+    double plainWidth = plainLabel->getCalculatedFrame().width;
+
+    // Subject: the same Label, but managesChildFrames (as the iOS label view became under PR #107).
+    auto managedRoot = utils.createRootView();
+    auto managedLabel = utils.createNode("Label");
+    auto managedFactory = managedLabel->getViewFactory();
+    managedFactory->setManagesChildFrames(true);
+    managedLabel->setViewFactory(utils.getViewTransactionScope(), nullptr);
+    managedLabel->setViewFactory(utils.getViewTransactionScope(), managedFactory);
+    managedRoot->appendChild(utils.getViewTransactionScope(), managedLabel);
+    utils.setViewNodeAttribute(managedRoot, "alignItems", Value(STRING_LITERAL("flex-start")));
+    managedRoot->getAttributesApplier().flush(utils.getViewTransactionScope());
+    utils.setViewNodeAttribute(managedLabel, "value", Value(STRING_LITERAL("New")));
+    utils.setViewNodeAttribute(managedLabel, "paddingLeft", Value(8.0));
+    utils.setViewNodeAttribute(managedLabel, "paddingRight", Value(8.0));
+    managedLabel->getAttributesApplier().flush(utils.getViewTransactionScope());
+    managedRoot->performLayout(utils.getViewTransactionScope(), Size(200, 200), LayoutDirectionLTR);
+    managedRoot->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+    double managedWidth = managedLabel->getCalculatedFrame().width;
+
+    // The control proves the 8 + 8 padding widens a plain label. Text is unmeasured in this headless
+    // runtime, so the label's whole width is exactly its horizontal padding.
+    EXPECT_GE(plainWidth, 16.0) << "control label width " << plainWidth
+                                << " does not reflect paddingLeft 8 + paddingRight 8";
+    EXPECT_EQ(managedWidth, plainWidth)
+        << "managesChildFrames diverted horizontal padding off the label's own measuring node: "
+        << "managed label width " << managedWidth << " vs plain label width " << plainWidth
+        << "; the padding widens neither the node nor the pill drawn around it.";
+}
+
+// Companion to the width invariant above: on a managesChildFrames node the measuring yoga node has no
+// padding, so Yoga hands onMeasure the full outer width. The padding must be reserved from the width
+// offered to the measurer (so text wraps in the inner width) before it is added back, otherwise a
+// wrapping/constrained padded label lays its text out for the full width and clips inside its padding.
+TEST(ViewNode, managesChildFramesLabelReservesPaddingFromMeasuredWidth) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createRootView();
+    auto label = createManagedChildFrameNode(utils);
+    root->appendChild(utils.getViewTransactionScope(), label);
+
+    double offeredWidth = -1.0;
+    label->setOnMeasureCallback(
+        utils.getViewTransactionScope(),
+        makeShared<ValueFunctionWithCallable>([&](const ValueFunctionCallContext& callContext) -> Value {
+            offeredWidth = callContext.getParameterAsDouble(0);
+            return Value(ValueArray::make({Value(10.0), Value(10.0)}));
+        }));
+    utils.setViewNodeAttribute(label, "paddingLeft", Value(8.0));
+    utils.setViewNodeAttribute(label, "paddingRight", Value(8.0));
+    label->getAttributesApplier().flush(utils.getViewTransactionScope());
+
+    // The label stretches to the 100pt root width, so it is measured under a bounded width of 100.
+    root->performLayout(utils.getViewTransactionScope(), Size(100, 200), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+
+    EXPECT_EQ(offeredWidth, 84.0) << "measurer was offered width " << offeredWidth
+                                  << ", expected the inner width 100 - 8 - 8 = 84";
+}
+
+TEST(ViewNode, inlineTextAttachmentUsesYogaFrameOnlyWhileParentIsMeasuring) {
+    ViewNodeTestsDependencies utils;
+
+    auto root = utils.createRootView();
+    auto container = createManagedChildFrameNode(utils);
+    auto child = utils.createView();
+    auto grandchild = utils.createView();
+    auto attachment = makeShared<ViewNodeTextInlineAttachment>(0, child);
+
+    root->appendChild(utils.getViewTransactionScope(), container);
+    container->appendChild(utils.getViewTransactionScope(), child);
+    child->appendChild(utils.getViewTransactionScope(), grandchild);
+
+    utils.setViewNodeAttribute(child, "width", Value(10.0));
+    utils.setViewNodeAttribute(child, "height", Value(12.0));
+    child->getAttributesApplier().flush(utils.getViewTransactionScope());
+    utils.setViewNodeAttribute(grandchild, "width", Value(4.0));
+    utils.setViewNodeAttribute(grandchild, "height", Value(5.0));
+    grandchild->getAttributesApplier().flush(utils.getViewTransactionScope());
+
+    Size attachmentSizeDuringMeasure;
+    container->setOnMeasureCallback(
+        utils.getViewTransactionScope(),
+        makeShared<ValueFunctionWithCallable>([&](const ValueFunctionCallContext& callContext) -> Value {
+            attachmentSizeDuringMeasure = attachment->getSize();
+            auto width = callContext.getParameterAsDouble(0);
+            auto height = callContext.getParameterAsDouble(2);
+            return Value(ValueArray::make({Value(width), Value(height)}));
+        }));
+
+    root->performLayout(utils.getViewTransactionScope(), Size(100, 100), LayoutDirectionLTR);
+    root->updateVisibilityAndPerformUpdates(utils.getViewTransactionScope());
+    ASSERT_EQ(Frame(0, 0, 10, 12), child->getCalculatedFrame());
+    ASSERT_EQ(Size(10, 12), attachment->getSize());
+
+    auto containerView = StandaloneView::unwrap(container->getView());
+    ASSERT_TRUE(containerView != nullptr);
+    auto initialInvalidateLayoutCount = containerView->getInvalidateLayoutCount();
+
+    utils.setViewNodeAttribute(child, "width", Value(30.0));
+    utils.setViewNodeAttribute(child, "height", Value(40.0));
+    child->getAttributesApplier().flush(utils.getViewTransactionScope());
+
+    attachmentSizeDuringMeasure = Size();
+    ASSERT_EQ(Size(100, 100), container->onMeasure(100, MeasureModeExactly, 100, MeasureModeExactly));
+    ASSERT_EQ(Size(30, 40), attachmentSizeDuringMeasure);
+    ASSERT_EQ(Frame(0, 0, 10, 12), child->getCalculatedFrame());
+    ASSERT_EQ(Size(10, 12), attachment->getSize());
+    ASSERT_EQ(initialInvalidateLayoutCount, containerView->getInvalidateLayoutCount());
+
+    root->performLayout(utils.getViewTransactionScope(), Size(100, 100), LayoutDirectionLTR);
+    ASSERT_EQ(Frame(0, 0, 30, 40), child->getCalculatedFrame());
+    ASSERT_EQ(initialInvalidateLayoutCount + 1, containerView->getInvalidateLayoutCount());
+
+    root->performLayout(utils.getViewTransactionScope(), Size(120, 100), LayoutDirectionLTR);
+    ASSERT_EQ(Frame(0, 0, 120, 100), container->getCalculatedFrame());
+    ASSERT_EQ(initialInvalidateLayoutCount + 1, containerView->getInvalidateLayoutCount());
+
+    utils.setViewNodeAttribute(grandchild, "width", Value(6.0));
+    utils.setViewNodeAttribute(grandchild, "height", Value(7.0));
+    grandchild->getAttributesApplier().flush(utils.getViewTransactionScope());
+    root->performLayout(utils.getViewTransactionScope(), Size(120, 100), LayoutDirectionLTR);
+    ASSERT_EQ(Frame(0, 0, 6, 7), grandchild->getCalculatedFrame());
+    ASSERT_EQ(initialInvalidateLayoutCount + 1, containerView->getInvalidateLayoutCount());
 }
 
 struct UpdateStep {

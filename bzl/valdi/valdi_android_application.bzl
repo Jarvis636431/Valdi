@@ -2,7 +2,15 @@ load("@rules_android//rules:rules.bzl", "android_binary")
 load("@rules_kotlin//kotlin:android.bzl", "kt_android_library")
 load("@valdi//valdi:valdi.bzl", "valdi_android_aar")
 load("//bzl:expand_template.bzl", "expand_template")
+load(
+    "//bzl/valdi:valdi_android_application_icons.bzl",
+    "generate_valdi_android_application_icons",
+    _valdi_android_application_icons = "valdi_android_application_icons",
+)
 load("//bzl/valdi/source_set:utils.bzl", "source_set_select")
+
+def valdi_android_application_icons(src, round_src = None):
+    return _valdi_android_application_icons(src = src, round_src = round_src)
 
 def _make_xml_compound_substitution(key_values):
     output = []
@@ -20,6 +28,7 @@ def valdi_android_application(
         app_manifest = None,
         assets = None,
         assets_dir = None,
+        app_icons = None,
         resource_files = None,
         icon_name = None,
         round_icon_name = None,
@@ -29,6 +38,17 @@ def valdi_android_application(
     src_target = "{}_src".format(name)
     src_activity_target = "{}_activitygen".format(name)
     aar_target = "{}_aar".format(name)
+
+    generated_app_icons = generate_valdi_android_application_icons(
+        name,
+        app_icons,
+        resource_files,
+        icon_name,
+        round_icon_name,
+    )
+    resource_files = generated_app_icons.resource_files
+    icon_name = generated_app_icons.icon_name
+    round_icon_name = generated_app_icons.round_icon_name
 
     expand_template(
         name = src_activity_target,
@@ -79,7 +99,9 @@ def valdi_android_application(
         manifest = "@valdi//bzl/valdi/app_templates:AndroidLibManifest.xml",
         deps = [
             "@valdi//valdi:valdi_android_support",
-            "@android_mvn//:androidx_appcompat_appcompat",
+            # Label() so android_mvn resolves against Valdi's repo mapping, not
+            # the consumer's — see COMMON_ANDROIDX_DEPS in valdi_module_android_common.bzl.
+            Label("@android_mvn//:androidx_appcompat_appcompat"),
         ] + deps,
     )
 

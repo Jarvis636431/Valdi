@@ -23,6 +23,22 @@ public:
     }
 
     // NOLINTNEXTLINE
+    static void nativeSetDescriptorClosureEnabled(fbjni::alias_ref<fbjni::JClass> /* clazz */,
+                                                  jlong ptr,
+                                                  jboolean enabled) {
+        auto registry = bridge<AndroidValueMarshallerRegistry>(ptr);
+        registry->setDescriptorClosureEnabled(enabled != JNI_FALSE);
+    }
+
+    // NOLINTNEXTLINE
+    static void nativeSetLazyFunctionReturnMarshallerEnabled(fbjni::alias_ref<fbjni::JClass> /* clazz */,
+                                                             jlong ptr,
+                                                             jboolean enabled) {
+        auto registry = bridge<AndroidValueMarshallerRegistry>(ptr);
+        registry->setLazyFunctionReturnMarshallerEnabled(enabled != JNI_FALSE);
+    }
+
+    // NOLINTNEXTLINE
     static jint nativeMarshallObject(fbjni::alias_ref<fbjni::JClass> /* clazz */,
                                      jlong ptr,
                                      jstring className,
@@ -113,6 +129,10 @@ public:
         javaClassStatic()->registerNatives({
             makeNativeMethod("nativeCreate", ValueMarshallerRegistryCppJNI::nativeCreate),
             makeNativeMethod("nativeDestroy", ValueMarshallerRegistryCppJNI::nativeDestroy),
+            makeNativeMethod("nativeSetDescriptorClosureEnabled",
+                             ValueMarshallerRegistryCppJNI::nativeSetDescriptorClosureEnabled),
+            makeNativeMethod("nativeSetLazyFunctionReturnMarshallerEnabled",
+                             ValueMarshallerRegistryCppJNI::nativeSetLazyFunctionReturnMarshallerEnabled),
             makeNativeMethod("nativeMarshallObject", ValueMarshallerRegistryCppJNI::nativeMarshallObject),
             makeNativeMethod("nativeMarshallObjectAsMap", ValueMarshallerRegistryCppJNI::nativeMarshallObjectAsMap),
             makeNativeMethod("nativeUnmarshallObject", ValueMarshallerRegistryCppJNI::nativeUnmarshallObject),

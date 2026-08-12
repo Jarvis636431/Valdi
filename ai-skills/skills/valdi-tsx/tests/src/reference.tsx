@@ -71,12 +71,12 @@ class Counter extends StatefulComponent<CounterViewModel, CounterState> {
   }
 
   // Class arrow functions — never inline lambdas in JSX props
-  private handleIncrement = (): void => {
+  private handleIncrement = (_event: unknown): void => {
     this.setState({ count: this.state.count + 1 });
   };
 
-  private handleTextChange = (text: string): void => {
-    this.setState({ inputText: text });
+  private handleTextChange = (event: { text: string }): void => {
+    this.setState({ inputText: event.text });
   };
 
   onRender(): void {
@@ -87,7 +87,7 @@ class Counter extends StatefulComponent<CounterViewModel, CounterState> {
         value={this.state.inputText}
         onChange={this.handleTextChange}
       />;
-      <button title="Increment" onPress={this.handleIncrement} />;
+      <label value="Increment" onTap={this.handleIncrement} />;
     </view>;
   }
 }
@@ -127,7 +127,7 @@ class MediaPlayer extends Component<MediaPlayerViewModel> {
     <view>
       {Device.isIOS() && <label value="iOS player" />}
       {Device.isAndroid() && <label value="Android player" />}
-      {Device.isMacOS() && <label value="macOS player" />}
+      {Device.isDesktop() && <label value="macOS player" />}
     </view>;
   }
 }
@@ -165,9 +165,33 @@ class AppRoot extends Component {
   }
 }
 
+// ─── @ExportModel ViewModel: only primitives, no type aliases ────────────────
+
+type Direction = 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
+
+/**
+ * @ViewModel
+ * @ExportModel
+ */
+interface GameViewModel {}  // Don't put Direction here — it can't be exported
+
+interface GameState {
+  direction: Direction;     // Type aliases are fine in State (not exported)
+  score: number;
+}
+
+class GameComponent extends StatefulComponent<GameViewModel, GameState> {
+  state: GameState = { direction: 'RIGHT', score: 0 };
+
+  onRender(): void {
+    <label value={`Direction: ${this.state.direction}, Score: ${this.state.score}`} />;
+  }
+}
+
 // Suppress unused-variable warnings for top-level declarations
 void Counter;
 void ItemList;
 void Greeting;
 void MediaPlayer;
 void AppRoot;
+void GameComponent;

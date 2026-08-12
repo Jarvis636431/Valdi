@@ -66,11 +66,13 @@ cc_library(
         "@harfbuzz",
         "@icu",
         "@skia//:core",
+        "@skia//:gif_decode_codec",
         "@skia//:jpeg_decode_codec",
         "@skia//:jpeg_encode_codec",
         "@skia//:png_decode_codec",
         "@skia//:png_encode_codec",
         "@skia//:skottie",
+        "@skia//:svg_renderer",
         "@skia//:webp_decode_codec",
         "@skia//:webp_encode_codec",
     ] + select({
@@ -138,6 +140,7 @@ cc_test(
     deps = [
         ":snap_drawing",
         ":test_utils",
+        "//valdi:valdi_snap_drawing",
         "@gtest//:gtest_main",
     ],
 )
@@ -172,6 +175,7 @@ cc_library(
         "-ljnigraphics",
     ],
     strip_include_prefix = "src",
+    target_compatible_with = ["@platforms//os:android"],
     visibility = ["//visibility:public"],
     deps = [
         ":snap_drawing_cc",
@@ -185,6 +189,8 @@ kt_android_library(
     srcs = glob([
         "src/java/**/*.kt",
     ]),
+    tags = ["manual"],  # kt_android_library requires Android SDK toolchain
+    target_compatible_with = ["@platforms//os:android"],
     visibility = ["//visibility:public"],
     exports = [
     ],
@@ -224,7 +230,9 @@ objc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":snap_drawing_cc",
-        "//valdi_core:valdi_core_objc",
+        # The apple sources include only valdi_core/cpp/** headers — the ObjC Composer runtime
+        # was never referenced. Consumers that want valdi's ObjC runtime dep it themselves.
+        "//valdi_core:valdi_core_cc",
     ],
 )
 
@@ -243,6 +251,7 @@ objc_library(
         "CoreMedia",
         "CoreVideo",
     ],
+    target_compatible_with = ["@platforms//os:ios"],
     deps = [
         ":snap_drawing",
         "@valdi//valdi:valdi_standalone_runtime",

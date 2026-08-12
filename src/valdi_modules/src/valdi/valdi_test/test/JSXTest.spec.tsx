@@ -1,4 +1,5 @@
 import { Component, StatefulComponent } from 'valdi_core/src/Component';
+import { IWebViewNativeController } from 'valdi_tsx/src/NativeTemplateElements';
 import 'jasmine/src/jasmine';
 import { createComponent, makeComponentTest } from './JSXTestUtils';
 
@@ -38,6 +39,103 @@ describe('JSX', () => {
               attributes: {},
             },
           ],
+        },
+      ],
+    });
+  });
+
+  it('can render a webview element', async () => {
+    class WebViewComponent extends Component {
+      private controller: IWebViewNativeController = {};
+
+      onRender() {
+        <webview controller={this.controller} />;
+      }
+    }
+
+    const component = createComponent(WebViewComponent);
+    const componentNode = component.getComponent().renderer.getComponentVirtualNode(component.getComponent());
+    const webViewElement = componentNode.children[0].element!;
+
+    expect(webViewElement.viewClass).toEqual('SCValdiWebView');
+    expect(webViewElement.getAttribute('controller')).toBeDefined();
+  });
+
+  it('can render a text animation group element', async () => {
+    class TextAnimationGroupComponent extends Component {
+      onRender() {
+        <view>
+          <textanimationgroup backgroundColor='blue'>
+            <view>
+              <label value='First' />
+            </view>
+            <textview value='Second' />
+          </textanimationgroup>
+        </view>;
+      }
+    }
+
+    const component = createComponent(TextAnimationGroupComponent);
+    const rootNode = await component.getRenderedNode();
+
+    expect(rootNode.simplify(['viewClass', 'attributes'])).toEqual({
+      viewClass: 'SCValdiView',
+      attributes: {},
+      children: [
+        {
+          viewClass: 'SCValdiTextAnimationGroup',
+          attributes: {
+            backgroundColor: 'blue',
+          },
+          children: [
+            {
+              viewClass: 'SCValdiView',
+              attributes: {},
+              children: [
+                {
+                  viewClass: 'SCValdiLabel',
+                  attributes: {
+                    value: 'First',
+                  },
+                },
+              ],
+            },
+            {
+              viewClass: 'SCValdiTextView',
+              attributes: {
+                value: 'Second',
+              },
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('can render a glass element with children and passes glass attributes through', async () => {
+    class GlassComponent extends Component {
+      onRender() {
+        <glass glassStyle='clear' glassTintColor='red' interactive={true}>
+          <label value='Behind glass' />
+        </glass>;
+      }
+    }
+
+    const component = createComponent(GlassComponent);
+    const rootNode = await component.getRenderedNode();
+    expect(rootNode.simplify(['viewClass', 'attributes'])).toEqual({
+      viewClass: 'SCValdiGlassView',
+      attributes: {
+        glassStyle: 'clear',
+        glassTintColor: 'red',
+        interactive: true,
+      },
+      children: [
+        {
+          viewClass: 'SCValdiLabel',
+          attributes: {
+            value: 'Behind glass',
+          },
         },
       ],
     });

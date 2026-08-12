@@ -12,18 +12,23 @@ COMPILER_FLAGS = [
     "-Wno-gnu-statement-expression",
     "-Wno-implicit-function-declaration",
     "-Wno-keyword-macro",
+    "-Wno-nontrivial-memcall",
     "-Wno-pedantic",
     "-Wno-vla-extension",
     "-Wno-zero-length-array",
 ]
 
+# Label() so android_mvn resolves against Valdi's repo mapping, not the
+# consumer's — these feed the valdi_android_aar aar_import, which evaluates in
+# an external consumer's package. See COMMON_ANDROIDX_DEPS in
+# bzl/valdi/valdi_module_android_common.bzl for the full rationale.
 ANDROIDX_RUNTIME_LIBRARIES = [
-    "@android_mvn//:androidx_annotation_annotation",
-    "@android_mvn//:androidx_appcompat_appcompat",
-    "@android_mvn//:androidx_core_core",
-    "@android_mvn//:androidx_dynamicanimation_dynamicanimation",
-    "@android_mvn//:androidx_lifecycle_lifecycle_common",
-    "@android_mvn//:androidx_lifecycle_lifecycle_process",
+    Label("@android_mvn//:androidx_annotation_annotation"),
+    Label("@android_mvn//:androidx_appcompat_appcompat"),
+    Label("@android_mvn//:androidx_core_core"),
+    Label("@android_mvn//:androidx_dynamicanimation_dynamicanimation"),
+    Label("@android_mvn//:androidx_lifecycle_lifecycle_common"),
+    Label("@android_mvn//:androidx_lifecycle_lifecycle_process"),
 ]
 
 # Creates a set of rules to build an .so that can contain
@@ -112,7 +117,7 @@ def valdi_android_aar(
         deps = ANDROIDX_RUNTIME_LIBRARIES,
     )
 
-def valdi_test(name, srcs = [], hdrs = {}, deps = [], data = None):
+def valdi_test(name, srcs = [], hdrs = {}, deps = [], data = None, size = None):
     lib_name = "{}_lib".format(name)
     native.cc_library(
         name = lib_name,
@@ -127,12 +132,16 @@ def valdi_test(name, srcs = [], hdrs = {}, deps = [], data = None):
         ] + deps),
     )
 
-    native.cc_test(
-        name = name,
-        linkstatic = True,
-        visibility = ["//visibility:public"],
-        deps = [
+    kwargs = {
+        "name": name,
+        "linkstatic": True,
+        "visibility": ["//visibility:public"],
+        "deps": [
             ":{}".format(lib_name),
             "@gtest//:gtest_main",
         ],
-    )
+    }
+    if size:
+        kwargs["size"] = size
+
+    native.cc_test(**kwargs)

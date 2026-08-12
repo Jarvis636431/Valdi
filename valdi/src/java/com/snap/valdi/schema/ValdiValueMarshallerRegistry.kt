@@ -18,6 +18,20 @@ interface ValdiValueMarshallerRegistry {
 
     fun disposeObject(cls: Class<*>, obj: Any)
 
+    /**
+     * Enables the batched descriptor-closure fast path in the native registry (default off). Gated by
+     * a COF and set once at startup; a no-op for backends that don't implement the optimization.
+     */
+    fun setDescriptorClosureEnabled(enabled: Boolean) {}
+
+    /**
+     * Enables lazy resolution of function synchronous-value return marshallers in the native registry
+     * (default off): the return-type marshaller and its type closure are resolved on first call instead
+     * of at root-create, keeping them off the CCD critical path. Gated by a COF and set once at startup;
+     * a no-op for backends that don't implement the optimization.
+     */
+    fun setLazyFunctionReturnMarshallerEnabled(enabled: Boolean) {}
+
 
     companion object {
         @JvmStatic

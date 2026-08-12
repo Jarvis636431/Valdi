@@ -2,7 +2,7 @@ import type { Argv } from 'yargs';
 import ora from 'ora';
 import { makeCommandHandler } from '../../utils/errorUtils';
 import type { ArgumentsResolver } from '../../utils/ArgumentsResolver';
-import { fetchRegistry, fetchSkillContent } from '../../utils/skillsRegistry';
+import { fetchRegistry, fetchSkillContent, getSkillResourceDir } from '../../utils/skillsRegistry';
 import { detectAdapters } from '../../utils/skillsAdapters';
 import { ANSI_COLORS } from '../../core/constants';
 import { wrapInColor } from '../../utils/logUtils';
@@ -56,9 +56,10 @@ async function skillsUpdate(_argv: ArgumentsResolver<CommandParameters>) {
     const updateSpinner = ora(`Updating ${skill.name}…`).start();
     try {
       const content = await fetchSkillContent(skill.path);
+      const resourceDir = getSkillResourceDir(skill.path) ?? undefined;
       for (const adapter of adapters) {
         if (adapter.listInstalled().includes(skill.name)) {
-          adapter.install(skill.name, content, skill);
+          adapter.install(skill.name, content, skill, resourceDir);
         }
       }
       updateSpinner.succeed(`Updated ${wrapInColor(skill.name, ANSI_COLORS.GREEN_COLOR)}`);

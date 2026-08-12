@@ -133,7 +133,10 @@ public:
 
     void setTweakValueProvider(const Shared<ITweakValueProvider>& tweakValueProvider);
 
+    void setMmapCacheDirectory(const Path& path);
+
     JavaScriptContextMemoryStatistics dumpMemoryStatistics();
+    void dumpMemoryStatisticsAsync(Function<void(JavaScriptContextMemoryStatistics)> completion);
 
     void setJsThreadQoS(ThreadQoSClass jsThreadQoS);
 
@@ -197,6 +200,7 @@ private:
     Holder<Ref<UserSession>> _userSession;
     Ref<ValdiRuntimeTweaks> _runtimeTweaks;
     Ref<Metrics> _metrics;
+    Path _mmapCacheDirectory;
     Ref<JavaScriptANRDetector> _anrDetector;
     PlatformType _platformType;
     ThreadQoSClass _jsThreadQoS;

@@ -35,9 +35,9 @@ export class HelloWorld extends Component {
       <image src={res.emoji} tint='black' height={48} width={48} margin={10} />
       {/* You can Pass an arbitrary url to the src of our image */}
       <image src='https://placedog.net/500' height={48} width={48} margin={10} />
-      {/* Urls are sometimes used for loading BOLT assets */}
+      {/* Urls can also be used for loading remote assets */}
       <image src='https://placecats.com/500/500' height={48} width={48} margin={10} />
-      {/* BOLT Urls can also be obtained from contentObjects using contentObjectImageLoaderUrl */}
+      {/* Remote asset urls can also be obtained from contentObjects using contentObjectImageLoaderUrl */}
       <image
         src={contentObjectImageLoaderUrl({
             contentObject, nativeContentTypeKey:
@@ -125,6 +125,13 @@ See the [LottieDemo app][] for examples of how to use `<animatedimage>`.
 ## Custom image loading
 
 If you need a different data format or additional functionality, you can do that with a [custom image loader](./advanced-images.md).
+
+## Byte-exact / raw bitmap data
+
+The `res/` pipeline is **lossy**: on Android it re-encodes images into density-scaled
+WebP drawables, which corrupts images used as literal per-pixel data. If you need the
+original, untouched bytes of a bundled image, do not use `res/` — see
+[Byte-exact (raw) bitmap data](./advanced-images.md#byte-exact-raw-bitmap-data).
 
 ## Preloading images
 

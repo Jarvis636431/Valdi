@@ -1,5 +1,6 @@
-# No bzlmod yet
-common --noenable_bzlmod
+# Valdi custom Bazel registry (patched rules_swift, rules_kotlin, etc.)
+common --registry=https://raw.githubusercontent.com/Snapchat/Valdi/{{VALDI_RELEASE_TAG}}/registry
+common --registry=https://bcr.bazel.build
 
 common --bes_instance_name=client
 common --enable_platform_specific_config
@@ -16,7 +17,7 @@ common --incompatible_java_common_parameters=false
 # Flags for compilation
 common --define enable_web=true
 
-build --tool_java_language_version=11
+build --tool_java_language_version=17
 build --java_language_version=11
 
 ## Disable sandboxing for macs, both laptops and in CI; the performance hit is much too high.
@@ -26,8 +27,10 @@ build:linux --sandbox_writable_path=/var/tmp
 # common cc configuration
 build --cxxopt=-std=c++20
 build --cxxopt=-Wno-ambiguous-reversed-operator
+build --cxxopt=-Wno-nullability-extension
 build --cxxopt=-D_LIBCPP_ENABLE_CXX20_REMOVED_TYPE_TRAITS
 build --host_cxxopt=-std=c++20
+build --host_cxxopt=-Wno-nullability-extension
 
 ## we need to disable this due to a bug in bazel
 ## see https://github.com/bazelbuild/bazel/issues/12381
@@ -61,10 +64,8 @@ build --define=android_standalone_dexing_tool=d8_compat_dx
 build --incremental_dexing
 
 # Disable 3rd party libs warnings
-build --per_file_copt=external/com_github_grpc_grpc/.*\$@-Wno-everything
-build --per_file_copt=external/snap_protobuf/.*\$@-Wno-everything
+build --per_file_copt=external/com_google_protobuf/.*\$@-Wno-everything
 build --per_file_copt=external/boringssl/.*\$@-Wno-everything
-build --per_file_copt=external/com_github_google_flatbuffers/.*\$@-Wno-everything
 
 # Enable persistent worker for Valdi compilation
 build --strategy=ValdiCompile=worker
@@ -78,7 +79,14 @@ build:linux --sandbox_writable_path=/var/tmp
 build --disk_cache=""
 
 # common build configuration
-build --experimental_generate_json_trace_profile
+build --generate_json_trace_profile
+
+# Alternating a Valdi test target and a web/npm target trims test-only options
+# differently, so their exec tool configs collide under one output path and
+# recompile thousands of shared tool actions. Opt-in config that the `valdi`
+# CLI passes to its build/test flows so they converge; raw `bazel` keeps the
+# default. Changing test flags (e.g. --test_output) repopulates it once.
+build:stable_exec --notrim_test_configuration
 # enable grpc log
 build --remote_grpc_log=/tmp/snap_client_grpc.log
 build --experimental_reuse_sandbox_directories

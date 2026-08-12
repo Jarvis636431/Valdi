@@ -246,6 +246,8 @@ public:
 
     void setRuntimeTweaks(const Ref<ValdiRuntimeTweaks>& runtimeTweaks);
 
+    void setMmapCacheDirectory(const Path& path);
+
     void setMetrics(const Ref<Metrics>& metrics);
     const Ref<Metrics>& getMetrics() const;
 
@@ -352,6 +354,7 @@ private:
 
     void runWithExclusiveJsThreadLock(DispatchFunction&& cb);
     bool disablePersistentStoreEncryption();
+    bool enableANRDiagnostics();
 };
 
 } // namespace Valdi

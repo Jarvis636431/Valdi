@@ -23,14 +23,15 @@ export class WebValdiImage extends WebValdiLayout {
   constructor(id: number, attributeDelegate?: UpdateAttributeDelegate) {
     super(id, attributeDelegate);
     this.img = new Image();
-    // Allow cross-origin images to be used on canvas without tainting it
-    this.img.crossOrigin = 'Anonymous';
     this.img.onload = () => {
       const w = this.img.naturalWidth / WEB_IMAGE_NATURAL_SCALE;
       const h = this.img.naturalHeight / WEB_IMAGE_NATURAL_SCALE;
       this._onAssetLoad?.({ width: w, height: h });
       this.updateImage();
       this._onImageDecoded?.();
+    };
+    this.img.onerror = () => {
+      this._onAssetLoad?.({ width: 0, height: 0 });
     };
   }
 
@@ -68,7 +69,7 @@ export class WebValdiImage extends WebValdiLayout {
 
   private updateImage() {
     const canvas = this.htmlElement as HTMLCanvasElement;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
     if (ctx === null) {
       throw new Error('Cannot get canvas context');
@@ -152,22 +153,25 @@ export class WebValdiImage extends WebValdiLayout {
     ctx.drawImage(this.img, -drawW / 2, -drawH / 2, drawW, drawH);
     ctx.restore(); // Restore from content transforms
 
-    // Apply tint
+    // Apply tint (getImageData requires CORS-clean canvas; skip for cross-origin images)
     if (this._tint) {
       const tintColor = convertColor(this._tint);
       const { r: tr, g: tg, b: tb } = hexToRGBColor(tintColor);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const data = imageData.data;
+      try {
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
 
-      // Replace color of non-transparent pixels with tint color (matching native behavior)
-      for (let i = 0; i < data.length; i += 4) {
-        const alpha = data[i + 3];
-        if (alpha === 0) continue;
-        data[i] = tr; // R
-        data[i + 1] = tg; // G
-        data[i + 2] = tb; // B
+        for (let i = 0; i < data.length; i += 4) {
+          const alpha = data[i + 3];
+          if (alpha === 0) continue;
+          data[i] = tr;
+          data[i + 1] = tg;
+          data[i + 2] = tb;
+        }
+        ctx.putImageData(imageData, 0, 0);
+      } catch (_) {
+        // Canvas tainted by cross-origin image — render untinted
       }
-      ctx.putImageData(imageData, 0, 0);
     }
 
     if (flip) {

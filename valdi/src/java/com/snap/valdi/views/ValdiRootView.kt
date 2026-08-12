@@ -5,8 +5,12 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.KeyEvent
+import android.view.ViewStructure
 import android.graphics.Rect
+import android.os.Build
+import androidx.annotation.RequiresApi
 import androidx.core.view.ViewCompat
 import com.snap.valdi.context.ValdiContext
 import com.snap.valdi.context.ValdiViewOwner
@@ -16,6 +20,7 @@ import com.snap.valdi.keyboard.KeyboardManager
 import com.snap.valdi.nodes.ValdiViewNode
 import com.snap.valdi.utils.ValdiLeakTracker
 import com.snap.valdi.utils.Disposable
+import com.snap.valdi.utils.getValdiHandler
 import com.snap.valdi.utils.runOnMainThreadIfNeeded
 import com.snap.valdi.utils.trace
 import com.snap.valdi.utils.ValdiMarshaller
@@ -25,10 +30,22 @@ import com.snap.valdi.views.touches.TouchDispatcher
 import com.snap.valdi.views.touches.backbutton.BackButtonListener
 import com.snap.valdi.callable.ValdiFunction
 import com.snap.valdi.callable.performSync
+import com.snapchat.client.valdi.NativeBridge
+import java.util.ArrayDeque
 import java.lang.ref.WeakReference
 import kotlin.math.min
 
 open class ValdiRootView: ValdiView, Disposable {
+
+    companion object {
+        /** Set from [ValdiTweaks.enableLayoutInvalidationRetry]. */
+        @JvmStatic
+        var enableLayoutInvalidationRetry: Boolean = false
+
+        /** Set from [ValdiTweaks.enableLayoutSpecsCaching]. */
+        @JvmStatic
+        var enableLayoutSpecsCaching: Boolean = false
+    }
 
     enum class ScrollDirection(val value: Int) {
         TopToBottom(0),
@@ -137,6 +154,14 @@ open class ValdiRootView: ValdiView, Disposable {
     private var contextReadyCallbacks: MutableList<(ValdiContext) -> Unit>? = null
     private var activeVisibility = View.INVISIBLE
     private var valdiUpdatesCount = 0
+    private var lastLayoutWidth = -1
+    private var lastLayoutHeight = -1
+    private var lastLayoutRTL = false
+    private var layoutSpecsDirty = true
+    private val onNextDrawCallbackHandles = ArrayDeque<Long>()
+    private var onNextDrawPreDrawListener: ViewTreeObserver.OnPreDrawListener? = null
+    private var onNextDrawPreDrawObserver: ViewTreeObserver? = null
+    private var onNextDrawAttachListener: View.OnAttachStateChangeListener? = null
 
     val performingUpdates: Boolean
         get() = valdiUpdatesCount > 0
@@ -176,13 +201,16 @@ open class ValdiRootView: ValdiView, Disposable {
      * Destroys the ValdiContext, which releases all its resources.
      */
     fun destroy() {
-        destroyed = true
+        runOnMainThreadIfNeeded {
+            destroyed = true
+            discardPendingOnNextDrawCallbacks()
 
-        getValdiContext {
-            ViewUtils.setViewNodeId(this, 0)
-            ViewUtils.setValdiContext(this, null)
-            setOnSystemUiVisibilityChangeListener(null)
-            it.destroy()
+            getValdiContext {
+                ViewUtils.setViewNodeId(this, 0)
+                ViewUtils.setValdiContext(this, null)
+                setOnSystemUiVisibilityChangeListener(null)
+                it.destroy()
+            }
         }
     }
 
@@ -364,6 +392,7 @@ open class ValdiRootView: ValdiView, Disposable {
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
 
+        clearOnNextDrawPreDrawListener()
         updateViewInflationState(false)
 
         if (ValdiLeakTracker.enabled && !disableLeakTracking) {
@@ -378,6 +407,9 @@ open class ValdiRootView: ValdiView, Disposable {
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
 
+        if (onNextDrawCallbackHandles.isNotEmpty()) {
+            scheduleOnNextDrawDispatch()
+        }
         updateViewInflationState(true)
 
         if (isLeakTracked) {
@@ -439,7 +471,15 @@ open class ValdiRootView: ValdiView, Disposable {
         if (context != null) {
             val width = r - l
             val height = b - t
-            context.setLayoutSpecs(width, height, isRTL())
+            val rtl = isRTL()
+            if (!enableLayoutSpecsCaching ||
+                width != lastLayoutWidth || height != lastLayoutHeight || rtl != lastLayoutRTL || layoutSpecsDirty) {
+                lastLayoutWidth = width
+                lastLayoutHeight = height
+                lastLayoutRTL = rtl
+                layoutSpecsDirty = false
+                context.setLayoutSpecs(width, height, rtl)
+            }
         }
         applyValdiLayout()
 
@@ -471,7 +511,43 @@ open class ValdiRootView: ValdiView, Disposable {
     }
 
     fun onValdiLayoutInvalidated() {
-        super.requestLayout()
+        // A native layout invalidation always needs the next layout pass to push specs.
+        layoutSpecsDirty = true
+        requestLayoutWithRetry()
+    }
+
+    private fun requestLayoutWithRetry() {
+        if (enableLayoutInvalidationRetry && (isLayoutRequested || isInLayout)) {
+            // A requestLayout during an in-flight traversal can be dropped by ViewRootImpl, leaving
+            // native's layout-specs latch stuck and pending view-tree updates unapplied. During the
+            // in-frame second layout pass the request is eaten before the force-layout flag is even
+            // set, so isInLayout must be checked too. Post a retry to guarantee a traversal.
+            post {
+                // Deliberately unguarded: after an eaten request isLayoutRequested reads false
+                // even though no traversal is coming.
+                super.requestLayout()
+            }
+        } else {
+            super.requestLayout()
+        }
+    }
+
+    internal fun enqueueOnNextDrawCallback(callbackHandle: Long) {
+        if (callbackHandle == 0L) {
+            return
+        }
+
+        if (destroyed) {
+            NativeBridge.discardCallback(callbackHandle)
+            return
+        }
+
+        val shouldInvalidate = onNextDrawCallbackHandles.isEmpty()
+        onNextDrawCallbackHandles.addLast(callbackHandle)
+        if (shouldInvalidate) {
+            scheduleOnNextDrawDispatch()
+            postInvalidateOnAnimation()
+        }
     }
 
     internal fun valdiUpdatesBegan() {
@@ -486,6 +562,11 @@ open class ValdiRootView: ValdiView, Disposable {
     }
     internal fun valdiUpdatesEndedAsync(layoutDidBecomeDirty: Boolean) {
         valdiUpdatesCount--
+        // Only dirty the specs cache when native reports the layout actually changed; this reuses
+        // the retry scheduling below without forcing a redundant setLayoutSpecs on every async batch.
+        if (layoutDidBecomeDirty) {
+            layoutSpecsDirty = true
+        }
         if (valdiUpdatesCount == 0 && !isLayoutRequested) {
             // This is called outside of normal update cycle
             // so we can't directly call applyValdiLayout().
@@ -493,8 +574,101 @@ open class ValdiRootView: ValdiView, Disposable {
             // due to calling layout in the middle of RecyclerView’s
             // layout stage
             post {
-                requestLayout()
+                if (enableLayoutInvalidationRetry) {
+                    // Deliberately bypass the suppressing requestLayout() override: an update batch
+                    // active by now would silently drop this request and nothing re-schedules it.
+                    // Safe: this only schedules a traversal, it never lays out synchronously.
+                    requestLayoutWithRetry()
+                } else {
+                    requestLayout()
+                }
             }
+        }
+    }
+
+    private fun discardPendingOnNextDrawCallbacks() {
+        clearOnNextDrawPreDrawListener()
+        clearOnNextDrawAttachListener()
+        while (onNextDrawCallbackHandles.isNotEmpty()) {
+            NativeBridge.discardCallback(requireNotNull(onNextDrawCallbackHandles.pollFirst()))
+        }
+    }
+
+    private fun scheduleOnNextDrawDispatch() {
+        if (onNextDrawPreDrawListener != null || onNextDrawAttachListener != null) {
+            return
+        }
+
+        if (!isAttachedToWindow) {
+            val attachListener = object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(v: View) {
+                    clearOnNextDrawAttachListener()
+                    scheduleOnNextDrawDispatch()
+                }
+
+                override fun onViewDetachedFromWindow(v: View) = Unit
+            }
+            onNextDrawAttachListener = attachListener
+            addOnAttachStateChangeListener(attachListener)
+            return
+        }
+
+        val observer = viewTreeObserver
+        if (!observer.isAlive) {
+            getValdiHandler().post {
+                if (onNextDrawCallbackHandles.isNotEmpty()) {
+                    scheduleOnNextDrawDispatch()
+                }
+            }
+            return
+        }
+
+        val listener = object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                clearOnNextDrawPreDrawListener()
+                getValdiHandler().postAtFrontOfQueue {
+                    if (onNextDrawCallbackHandles.isNotEmpty()) {
+                        performPendingOnNextDrawCallbacks()
+                    }
+                }
+                return true
+            }
+        }
+        onNextDrawPreDrawListener = listener
+        onNextDrawPreDrawObserver = observer
+        observer.addOnPreDrawListener(listener)
+    }
+
+    private fun clearOnNextDrawPreDrawListener() {
+        val listener = onNextDrawPreDrawListener ?: return
+        onNextDrawPreDrawListener = null
+        val observer = onNextDrawPreDrawObserver
+        onNextDrawPreDrawObserver = null
+        if (observer?.isAlive == true) {
+            observer.removeOnPreDrawListener(listener)
+            return
+        }
+
+        val currentObserver = viewTreeObserver
+        if (currentObserver.isAlive) {
+            currentObserver.removeOnPreDrawListener(listener)
+        }
+    }
+
+    private fun clearOnNextDrawAttachListener() {
+        val listener = onNextDrawAttachListener ?: return
+        onNextDrawAttachListener = null
+        removeOnAttachStateChangeListener(listener)
+    }
+
+    private fun performPendingOnNextDrawCallbacks() {
+        val callbackHandles = ArrayList<Long>(onNextDrawCallbackHandles.size)
+        while (onNextDrawCallbackHandles.isNotEmpty()) {
+            callbackHandles.add(requireNotNull(onNextDrawCallbackHandles.pollFirst()))
+        }
+
+        for (callbackHandle in callbackHandles) {
+            NativeBridge.performCallback(callbackHandle)
         }
     }
 
@@ -507,6 +681,9 @@ open class ValdiRootView: ValdiView, Disposable {
     }
 
     internal fun contextIsReady(valdiContext: ValdiContext) {
+        // A recycled root view can be rebound to a new context at the same dimensions; force the
+        // next layout to push specs so the new context's native ViewNodeTree gets its bounds.
+        layoutSpecsDirty = true
         updateViewInflationState()
 
         if (contextReadyCallbacks != null) {
@@ -522,8 +699,11 @@ open class ValdiRootView: ValdiView, Disposable {
     }
 
     protected fun finalize() {
-        if (destroyValdiContextOnFinalize) {
-            valdiContext?.destroy()
+        runOnMainThreadIfNeeded {
+            discardPendingOnNextDrawCallbacks()
+            if (destroyValdiContextOnFinalize) {
+                valdiContext?.destroy()
+            }
         }
     }
 
@@ -560,6 +740,35 @@ open class ValdiRootView: ValdiView, Disposable {
         }
         super.onFocusChanged(focused, direction, previouslyFocusedRect)
         accessibilityDelegate?.onFocusChanged(focused, direction, previouslyFocusedRect)
+    }
+
+    /**
+     * Android's Assist/Autofill framework requests the entire virtual accessibility tree
+     * synchronously on the main thread (ActivityThread.handleRequestAssistContextExtras ->
+     * View.onProvideVirtualStructure). For large or pathologically duplicated Valdi trees this
+     * recurses into tens of thousands of nodes and ANRs, predominantly on low-end Android 8
+     * devices (COMPOSER-5846). On Android 8/8.1, skip exposing the Valdi virtual tree to these
+     * structure requests. TalkBack and other accessibility services use the
+     * AccessibilityNodeProvider path (getAccessibilityNodeProvider) and are unaffected.
+     */
+    override fun onProvideVirtualStructure(structure: ViewStructure?) {
+        if (shouldSkipAssistAccessibilityStructure()) {
+            return
+        }
+        super.onProvideVirtualStructure(structure)
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    override fun onProvideAutofillVirtualStructure(structure: ViewStructure?, flags: Int) {
+        if (shouldSkipAssistAccessibilityStructure()) {
+            return
+        }
+        super.onProvideAutofillVirtualStructure(structure, flags)
+    }
+
+    private fun shouldSkipAssistAccessibilityStructure(): Boolean {
+        return Build.VERSION.SDK_INT == Build.VERSION_CODES.O ||
+            Build.VERSION.SDK_INT == Build.VERSION_CODES.O_MR1
     }
 
 }

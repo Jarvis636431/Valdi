@@ -191,11 +191,49 @@ export class ModuleLoader implements IModuleLoader {
     this.doPreload(resolvedPath.absolutePath, 0, maxDepth, {});
   }
 
-  preloadBatch(paths: string[], maxDepth: number): void {
+  preloadBatch(paths: string[], maxDepth: number, chunkSize?: number): void {
     const visited: StringSet = {};
-    for (let i = 0; i < paths.length; i++) {
-      const resolvedPath = resolveAbsoluteImportFromPath(paths[i]);
+
+    // chunkSize > 0 opts into cooperative yielding: evaluate up to `chunkSize` modules, then
+    // return control to the JS scheduler before the next chunk. Preloading a large batch
+    // (e.g. the capture-start SnapEditor list) otherwise runs as a single uninterrupted JS task
+    // that holds the runtime thread for its entire duration; on slow devices that can exceed the
+    // 5s Composer watchdog (JavaScriptANRDetector's ack task is queued on this same thread) and
+    // block queued input. Yielding between chunks lets the ack and input tasks interleave.
+    //
+    // chunkSize omitted / <= 0 keeps the original synchronous single-task behavior. The batch
+    // caller opts in via a platform config, so this stays off by default (e.g. on iOS).
+    if (chunkSize === undefined || chunkSize <= 0 || paths.length <= chunkSize) {
+      for (let i = 0; i < paths.length; i++) {
+        this.doPreloadIsolated(paths[i], maxDepth, visited);
+      }
+      return;
+    }
+
+    let index = 0;
+    const evaluateNextChunk = () => {
+      const end = Math.min(index + chunkSize, paths.length);
+      for (; index < end; index++) {
+        this.doPreloadIsolated(paths[index], maxDepth, visited);
+      }
+      if (index < paths.length) {
+        // Reschedule the rest as a fresh work item so the JS dispatch queue drains other
+        // pending tasks (watchdog ack, input) between chunks. Interruptible: drop the
+        // remaining preload if the runtime is torn down.
+        runtime.scheduleWorkItem(evaluateNextChunk, 0, true);
+      }
+    };
+    evaluateNextChunk();
+  }
+
+  // Preloading is opportunistic: a module that throws at evaluation (or is missing from a
+  // stale path list) must not abort the rest of the batch.
+  private doPreloadIsolated(path: string, maxDepth: number, visited: StringSet) {
+    try {
+      const resolvedPath = resolveAbsoluteImportFromPath(path);
       this.doPreload(resolvedPath.absolutePath, 0, maxDepth, visited);
+    } catch (err) {
+      console.log(`Could not preload module ${path}: ${(err as Error).message}`);
     }
   }
 
@@ -298,17 +336,25 @@ export class ModuleLoader implements IModuleLoader {
   }
 
   private unloadNextModule(modulesToKeep: StringSet, unloadedModules: StringSet): boolean {
+    const leaves: string[] = [];
     for (const modulePath in this.modules) {
       if (modulesToKeep[modulePath]) {
         continue;
       }
       const jsModule = this.modules[modulePath];
       if (jsModule && !isModuleUsed(jsModule)) {
-        this.doUnload(modulePath, unloadedModules);
-        return true;
+        leaves.push(modulePath);
       }
     }
-    return false;
+    let unloadedAny = false;
+    for (const modulePath of leaves) {
+      const jsModule = this.modules[modulePath];
+      if (jsModule && !isModuleUsed(jsModule)) {
+        this.doUnload(modulePath, unloadedModules);
+        unloadedAny = true;
+      }
+    }
+    return unloadedAny;
   }
 
   unload(paths: string[], isHotReloading: boolean, disableHotReloadDenyList: boolean): string[] {
@@ -601,6 +647,14 @@ export class ModuleLoader implements IModuleLoader {
           }
 
           return exportsObj[key];
+        },
+        set(target, key, value) {
+          if (!didEval) {
+            lazyExports();
+          }
+
+          exportsObj[key] = value;
+          return true;
         },
       });
     }

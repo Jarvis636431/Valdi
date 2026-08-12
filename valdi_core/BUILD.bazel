@@ -47,6 +47,7 @@ objc_library(
         "test/ios/**/*.mm",
     ]),
     copts = OBJC_FLAGS + COMPILER_FLAGS,
+    target_compatible_with = ["@platforms//os:ios"],
     deps = [
         ":valdi_core",
         "@gtest",
@@ -60,6 +61,17 @@ cc_test(
     visibility = ["//visibility:public"],
     deps = [
         ":test_ios_lib",
+        "@gtest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "test_cc",
+    srcs = glob(["test/cpp/**/*.cpp"]),
+    linkstatic = 1,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":valdi_core_cc",
         "@gtest//:gtest_main",
     ],
 )
@@ -121,6 +133,7 @@ cc_library(
         "src",
         "src/bindings/include",
     ],
+    target_compatible_with = ["@platforms//os:android"],
     visibility = ["//visibility:public"],
     deps = [
         ":private_djinni_generated_cc",
@@ -152,6 +165,7 @@ cc_library(
         "-ljnigraphics",
     ],
     strip_include_prefix = "src",
+    target_compatible_with = ["@platforms//os:android"],
     visibility = ["//visibility:public"],
     deps = [":valdi_core_jni"],
     alwayslink = True,
@@ -202,6 +216,7 @@ PRIVATE_HEADERS = [
     "src/valdi_core/ios/valdi_core/SCValdiObjCConversionUtils.h",
     "src/valdi_core/ios/valdi_core/SCValdiObjCValue.h",
     "src/valdi_core/ios/valdi_core/SCValdiObjCValueDelegate.h",
+    "src/valdi_core/ios/valdi_core/SCValdiIOSBitmapFactory.hpp",
     "src/valdi_core/ios/valdi_core/SCValdiTouches.h",
     "src/valdi_core/ios/valdi_core/SCValdiValueUtils.h",
     "src/valdi_core/ios/valdi_core/ValueFunctionWithSCValdiFunction.h",
@@ -276,11 +291,20 @@ swift_library(
     ]),
     copts = ["-Osize"],
     module_name = "ValdiCoreSwift",
+    target_compatible_with = ["@platforms//os:ios"],
     visibility = ["//visibility:public"],
     deps = [
         ":valdi_core_cpp_objc",
         ":valdi_core_swift_interop_lib",
     ],
+)
+
+filegroup(
+    name = "valdi_core_swift_marshaller_srcs",
+    srcs = glob([
+        "src/valdi_core/ios/swift/**/*.swift",
+    ]),
+    visibility = ["//visibility:public"],
 )
 
 filegroup(
@@ -332,8 +356,11 @@ objc_library(
     ],
     module_name = "valdi_core",
     sdk_frameworks = select({
-        "@platforms//os:ios": ["UIKit"],
-        "@platforms//os:macos": [],
+        "@platforms//os:ios": [
+            "CoreGraphics",
+            "UIKit",
+        ],
+        "@platforms//os:macos": ["Foundation"],
     }),
     tags = [
         "core_target",

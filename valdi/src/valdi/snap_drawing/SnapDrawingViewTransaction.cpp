@@ -23,10 +23,11 @@
 #include "snap_drawing/cpp/Drawing/GraphicsContext/BitmapGraphicsContext.hpp"
 #include "valdi/snap_drawing/Animations/ValdiAnimator.hpp"
 
+#include "snap_drawing/cpp/Layers/Interfaces/IChildInsertionLayerProvider.hpp"
 #include "snap_drawing/cpp/Layers/Interfaces/ILoadedAssetLayer.hpp"
 #include "snap_drawing/cpp/Layers/LayerRoot.hpp"
 #include "snap_drawing/cpp/Layers/ScrollLayer.hpp"
-#include "valdi/runtime/Views/Measure.hpp"
+#include "valdi_core/cpp/Views/Measure.hpp"
 
 using namespace Valdi;
 
@@ -45,7 +46,12 @@ void SnapDrawingViewTransaction::flush(bool sync) {}
 
 void SnapDrawingViewTransaction::willUpdateRootView(const Ref<View>& view) {}
 
-void SnapDrawingViewTransaction::didUpdateRootView(const Ref<View>& view, bool layoutDidBecomeDirty) {}
+void SnapDrawingViewTransaction::didUpdateRootView(const Ref<View>& view, bool layoutDidBecomeDirty) {
+    auto callbacks = std::move(_pendingOnNextDrawCallbacks);
+    for (auto& callback : callbacks) {
+        callback();
+    }
+}
 
 void SnapDrawingViewTransaction::moveViewToTree(const Ref<View>& view, ViewNodeTree* viewNodeTree, ViewNode* viewNode) {
     auto layer = toLayer(view);
@@ -65,13 +71,15 @@ void SnapDrawingViewTransaction::insertChildView(const Ref<View>& view,
         return;
     }
 
-    auto scrollView = Valdi::castOrNull<ScrollLayer>(parent);
-
-    if (scrollView != nullptr) {
-        scrollView->getContentLayer()->insertChild(child, static_cast<size_t>(index));
-        auto viewNode = snap::drawing::valdiViewNodeFromLayer(*scrollView);
-        if (viewNode != nullptr) {
-            scrollView->setHorizontal(viewNode->isHorizontal());
+    auto* childInsertionLayerProvider = dynamic_cast<IChildInsertionLayerProvider*>(parent.get());
+    if (childInsertionLayerProvider != nullptr) {
+        childInsertionLayerProvider->getChildInsertionLayer().insertChild(child, static_cast<size_t>(index));
+        auto scrollView = Valdi::castOrNull<ScrollLayer>(parent);
+        if (scrollView != nullptr) {
+            auto viewNode = snap::drawing::valdiViewNodeFromLayer(*scrollView);
+            if (viewNode != nullptr) {
+                scrollView->setHorizontal(viewNode->isHorizontal());
+            }
         }
     } else {
         parent->insertChild(child, static_cast<size_t>(index));
@@ -169,6 +177,16 @@ void SnapDrawingViewTransaction::setViewLoadedAsset(const Ref<View>& view,
     auto loadedAssetLayer = dynamic_cast<ILoadedAssetLayer*>(layer.get());
     if (loadedAssetLayer != nullptr) {
         loadedAssetLayer->onLoadedAssetChanged(loadedAsset, shouldDrawFlipped);
+        return;
+    }
+
+    auto bridgeLayer = Valdi::castOrNull<BridgeLayer>(layer);
+    auto viewNode = bridgeLayer != nullptr ? valdiViewNodeFromLayer(*bridgeLayer) : nullptr;
+    auto bridgedView = bridgeLayer != nullptr ? bridgeLayer->getBridgedView() : nullptr;
+    if (viewNode != nullptr && bridgedView != nullptr) {
+        bridgedView->getViewTransaction(viewNode->getViewNodeTree())
+            .setViewLoadedAsset(bridgedView->getView(), loadedAsset, shouldDrawFlipped);
+        bridgeLayer->setNeedsDisplay();
     }
 }
 
@@ -257,6 +275,10 @@ void SnapDrawingViewTransaction::flushAnimator(const Ref<Animator>& animator, co
 void SnapDrawingViewTransaction::cancelAnimator(const Ref<Animator>& animator) {
     auto typedAnimator = Valdi::castOrNull<ValdiAnimator>(animator->getNativeAnimator());
     typedAnimator->cancel();
+}
+
+void SnapDrawingViewTransaction::scheduleOnNextDraw(const Ref<View>& rootView, Valdi::DispatchFunction callback) {
+    _pendingOnNextDrawCallbacks.emplace_back(std::move(callback));
 }
 
 void SnapDrawingViewTransaction::executeInTransactionThread(DispatchFunction executeFn) {

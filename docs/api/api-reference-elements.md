@@ -8,6 +8,7 @@ This document provides a comprehensive reference for all native template element
 - [View](#view)
 - [ScrollView](#scrollview)
 - [ImageView](#imageview)
+- [WebView](#webview)
 - [VideoView](#videoview)
 - [Label](#label)
 - [TextField](#textfield)
@@ -825,6 +826,32 @@ All view properties from [View](#view) including:
 
 ---
 
+## WebView
+
+**JSX Element:** `<webview>`
+
+**iOS Native:** `SCValdiWebView`
+**Android Native:** `com.snap.valdi.modules.webview.ValdiWebView`
+
+A host element for a native webview controller created by the `valdi_webview` module.
+
+### Properties
+
+All properties from [Layout Attributes](#layout), plus:
+
+#### Controller
+
+**`controller`**: `IWebViewNativeController`
+- Native webview controller created by `WebView.createController()` from `valdi_webview`.
+- The controller owns the platform webview and is attached to this host element when the attribute is applied.
+
+#### Styling
+
+**`style`**: `IStyle<WebViewElement | View | Layout>`
+- See [View Style Attributes](api-style-attributes.md#view-styles) for common view styling attributes.
+
+---
+
 ## VideoView
 
 **JSX Element:** `<video>`
@@ -917,7 +944,7 @@ All properties from [Layout Attributes](#layout), plus:
   2. required: the size of the font
   3. optional: the scaling type (or 'unscaled' for no scaling)
   4. optional: the maximum size of the font after scaling
-- Example: `'AvenirNext-Bold 16 unscaled 16'`
+- Example: `'Montserrat-Bold 16 unscaled 16'`
 - Default: `'system 12'`
 
 **`color`**: `Color`
@@ -950,13 +977,18 @@ All properties from [Layout Attributes](#layout), plus:
   - In RTL locales, "right" will align text to the left of the label's bounds
 - Default: `'left'`
 
-**`textDecoration`**: `'none' | 'strikethrough' | 'underline'`
+**`textDecoration`**: `'none' | 'strikethrough' | 'underline' | 'dashed-underline' | 'dotted-underline'`
 - Optionally adds a visual decoration effect to the label's text.
 - Default: `undefined`
 
 **`lineHeight`**: `number`
+- Explicit rendering size of each line of the label, in points.
+- When both `lineHeight` and `lineHeightMultiple` are provided, `lineHeight` takes precedence.
+- Default: `undefined`
+
+**`lineHeightMultiple`**: `number`
 - Rendering size of each line of the label, this value is a ratio of the font height.
-- If the lineHeight ratio is above 1, spacing is added on top of each line of the text.
+- If the `lineHeightMultiple` value is above 1, spacing is added on top of each line of the text.
 - Example: A value of 2 will double the height of each line.
 - Default: `1`
 
@@ -968,6 +1000,21 @@ All properties from [Layout Attributes](#layout), plus:
 **`textOverflow`**: `'ellipsis' | 'clip'`
 - Controls how hidden text overflow content is signaled to users.
 - Default: `'ellipsis'`
+
+#### Text Selection
+
+**`selectable`**: `boolean`
+- Enables text selection and copy support for the label.
+- Default: `false`
+
+**`selection`**: `[number, number]`
+- First index for start of selection.
+- Second index for end of selection.
+- Set both to the same value to place the selection at a single position.
+
+**`onSelectionChange`**: `(event: EditTextEvent) => void`
+- Callback called when the label selection is changed.
+- The event contains the current text value and selected indexes.
 
 #### Auto-sizing
 
@@ -1077,6 +1124,10 @@ All text properties from [Label](#label) including `value`, `font`, `color`, `te
 
 #### Selection
 
+**`selectable`**: `boolean`
+- Allows users to select and copy text input text through the native text selection UI when the text input is not editable.
+- Default: `true`
+
 **`selection`**: `[number, number]`
 - Selection for the text field.
 - First index for start of selection
@@ -1140,7 +1191,7 @@ All view properties from [View](#view).
 **JSX Element:** `<textview>`
 
 **iOS Native:** `SCValdiTextView`  
-**Android Native:** `com.snap.valdi.views.ValditTextMultiline`
+**Android Native:** `com.snap.valdi.views.ValdiEditTextMultiline`
 
 A multi-line text input field.
 
@@ -1162,6 +1213,40 @@ All properties from [TextField](#textfield), except `returnKeyText` is replaced 
 **`textGravity`**: `'top' | 'center' | 'bottom'`
 - Set the text gravity/alignment vertically within the text view.
 - Default: `'center'`
+
+#### Text Rendering
+
+**`numberOfLines`**: `number`
+- Controls the maximum number of visible text lines.
+- Set to `0` to remove the limit and allow as many lines as needed.
+- Default: `0`
+
+**`textOverflow`**: `'ellipsis' | 'clip'`
+- Controls how hidden text overflow content is signaled to users.
+
+**`textDecoration`**: `'none' | 'strikethrough' | 'underline' | 'dashed-underline' | 'dotted-underline'`
+- Optionally adds a visual decoration effect to the text view's text.
+
+**`lineHeight`**: `number`
+- Explicit rendering size of each line of the text view, in points.
+- When both `lineHeight` and `lineHeightMultiple` are provided, `lineHeight` takes precedence.
+
+**`lineHeightMultiple`**: `number`
+- Rendering size of each line of the text view as a multiple of the font height.
+- Default: `1`
+
+**`customUnderlineStyle`**: `string`
+- Overrides underline drawing geometry for underlined text ranges.
+- Format: `"height onWidth offWidth offset"`.
+
+**`textGradient`**: `string`
+- Sets a gradient color for the text string.
+
+#### Text Selection
+
+**`selectable`**: `boolean`
+- Allows users to select and copy text view text through the native text selection UI.
+- Default: `true`
 
 #### Background Effect
 
@@ -1572,7 +1657,7 @@ type LayoutAccessibilityNavigation =
 #### Label Enums
 
 ```typescript
-type LabelTextDecoration = 'none' | 'strikethrough' | 'underline';
+type LabelTextDecoration = 'none' | 'strikethrough' | 'underline' | 'dashed-underline' | 'dotted-underline';
 type LabelTextAlign = 'left' | 'right' | 'center' | 'justified';
 type LabelFontWeight = 'light' | 'normal' | 'medium' | 'demi-bold' | 'bold' | 'black';
 type LabelFontStyle = 'normal' | 'italic';
@@ -1729,4 +1814,3 @@ type BlurStyle =
 - [Core Text Guide](../docs/core-text.md) - Working with text and inputs
 - [Core Flexbox](../docs/core-flexbox.md) - Understanding flexbox layout
 - [Advanced Animations](../docs/advanced-animations.md) - Animating properties
-

@@ -13,25 +13,37 @@ import android.text.Layout
 import android.text.Spannable
 import android.text.SpannableString
 import android.text.Spanned
+import android.text.TextPaint
 import android.util.Size
+import android.util.TypedValue
+import android.view.View
+import android.view.ViewGroup
 import android.widget.TextView
 import androidx.core.widget.TextViewCompat
+import com.snap.valdi.attributes.impl.fonts.FontManager
 import com.snap.valdi.attributes.impl.fonts.FontDescriptor
 import com.snap.valdi.attributes.impl.fonts.MissingFontsTracker
 import com.snap.valdi.attributes.impl.gradients.ValdiGradient
 import com.snap.valdi.extensions.ViewUtils
+import com.snap.valdi.logger.Logger
+import com.snap.valdi.nodes.IValdiViewNode
 import com.snap.valdi.utils.CoordinateResolver
 import com.snap.valdi.utils.Disposable
 import com.snap.valdi.utils.LoadCompletion
 import com.snap.valdi.utils.runOnMainThreadIfNeeded
-import com.snap.valdi.views.ValdiEditText
+import com.snap.valdi.views.ValdiTextHolder
+import com.snap.valdi.views.ValdiTextAnimationGroup
+import com.snap.valdi.views.ValdiEditTextInput
+import com.snap.valdi.views.ValdiEditTextMultiline
 import com.snap.valdi.views.touches.AttributedTextTapGestureRecognizer
 import kotlin.math.max
 
 class TextViewHelper(private val view: TextView,
-                     private val textConverter: RichTextConverter,
+                     private val fontManager: FontManager,
                      private val defaultAttributes: FontAttributes,
-                     private val valueAttributeId: Int) : MissingFontsTracker {
+                     private val valueAttributeId: Int,
+                     private val logger: Logger,
+                     private val textHolder: ValdiTextHolder? = view as? ValdiTextHolder) : MissingFontsTracker {
 
     companion object {
         private val fontMetrics: Paint.FontMetrics = Paint.FontMetrics()
@@ -64,18 +76,33 @@ class TextViewHelper(private val view: TextView,
      */
     var managesNumberOfLines = true
 
+    var defaultNumberOfLines = 1
+
     /**
      * For TextViews that don't support selection, we allow text replacement by default
      * For EditText where selection is paramount, we disable text replacement in spannables, and draw an outline on top as needed
      */
     var disableTextReplacement = false
 
+    /**
+     * When true, match iOS: after text is set programmatically, keep the caret at the end of the
+     * text instead of Android's default of moving it to the start, unless an explicit selection is
+     * provided. Gated by the VALDI_EDITTEXT_RESET_SELECTION_MATCHES_IOS COF; applies to ValdiEditText.
+     */
+    var matchIosTextSetCaret = false
+
     var fontAttributes: FontAttributes? = null
         set(value) {
             if (field != value) {
+                val text = textValue as? String
+                val didRequireAttributedText = textRequiresAttributedText(text, field)
+                val willRequireAttributedText = textRequiresAttributedText(text, value)
                 field = value
                 fontAttributesDirty = true
                 fontAutofitDirty = true
+                if (didRequireAttributedText != willRequireAttributedText) {
+                    textValueDirty = true
+                }
                 onDirty()
             }
         }
@@ -118,6 +145,19 @@ class TextViewHelper(private val view: TextView,
 
     private var textValueDirty = false
     private var isAttributedText = false
+    val processedText: ValdiProcessedText?
+        get() = processedTextValue
+    private var processedTextValue: ValdiProcessedText? = null
+    private var attributedTextAnimator: AttributedTextAnimator? = null
+    private var animationFrameCallbackPosted = false
+    private var animationFrameCallback: Runnable? = null
+    private var textAnimationGroup: ValdiTextAnimationGroup? = null
+    private var textAnimationTimeline: AttributedTextAnimationTimeline? = null
+    var textAnimationPartCount: Int = 0
+        private set
+    private var textAnimationBasePartIndex: Int = 0
+    internal val textAnimationView: TextView
+        get() = view
 
     private var needsUpdateOnLayoutCallbacks = false
 
@@ -125,11 +165,31 @@ class TextViewHelper(private val view: TextView,
     private lateinit var initialGradientSize: Size
 
     private var fontLoadDisposables: MutableMap<FontDescriptor, Disposable>? = null
+    var viewNode: IValdiViewNode? = null
+        set(value) {
+            field = value
+            attributedTextAnimator?.viewNode = value
+        }
 
     fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         updateTextAttributes()
         TextViewHelper.lastMeasuredText = view.text
         TextViewHelper.lastMeasuredFontAttributes = fontAttributes
+    }
+
+    fun updateInlineAttachments(): Boolean {
+        return processedTextValue?.updateInlineAttachments() == true
+    }
+
+    fun refreshProcessedTextStorage() {
+        val processedText = processedTextValue ?: return
+        if (view is ValdiEditTextInput) {
+            view.refreshTextAndSelection()
+        } else {
+            setTextViewProcessedText(processedText)
+        }
+
+        needsUpdateOnLayoutCallbacks = true
     }
 
     fun onLayout(changed: Boolean) {
@@ -139,48 +199,32 @@ class TextViewHelper(private val view: TextView,
         updateOnLayoutCallbacks()
     }
 
+    fun applyCurrentNumberOfLines() {
+        applyNumberOfLines(fontAttributes ?: defaultAttributes)
+    }
+
     private fun updateOnLayoutCallbacks() {
         // TODO(3065): Also update on view size changed
-        if (view.getText() !is Spanned || !needsUpdateOnLayoutCallbacks) {
+        val processedText = processedTextValue
+        if (processedText == null || !processedText.hasOnLayout || !needsUpdateOnLayoutCallbacks) {
             return
         }
         val layout = view.getLayout() ?: return
-        val layoutText = layout.text as? Spanned ?: return
-
-        val attributeLayoutSpans = layoutText.getSpans(
-            0, layoutText.length,
-            OnLayoutSpan::class.java
-        )
-
-        for (span in attributeLayoutSpans) {
-            val start = layoutText.getSpanStart(span)
-            val end = layoutText.getSpanEnd(span)
-
-            if (start < 0 || end < 0 || start > end || end > layoutText.length) {
-                continue
-            }
-
-            val lineStart = layout.getLineForOffset(start)
-            val xStart = coordinateResolver.fromPixel(layout.getPrimaryHorizontal(start))
-            val yStart = coordinateResolver.fromPixel(layout.getLineTop(lineStart).toDouble())
-
-            val lineEnd = layout.getLineForOffset(end)
-            val xEnd = coordinateResolver.fromPixel(layout.getPrimaryHorizontal(end))
-            val yEnd = coordinateResolver.fromPixel(layout.getLineBottom(lineEnd).toDouble())
-
-            // TODO(3944): Add support for multiline text
-            span.onLayout(xStart.toDouble(), yStart.toDouble(), (xEnd - xStart).toDouble(), (yEnd - yStart).toDouble())
-        }
+        // TODO(3944): Add support for multiline text
+        processedText.updateOnLayoutCallbacks(layout, coordinateResolver)
         needsUpdateOnLayoutCallbacks = false
     }
 
     private fun updateTextAttributes() {
-        if (isAttributedText) {
+        val editText = view as? ValdiEditTextInput
+        val setTextGenerationBefore = editText?.setTextGeneration ?: 0
+        val text = textValue as? String
+        if (isAttributedText || textRequiresAttributedText(text)) {
             if (fontAttributesDirty || textValueDirty) {
                 fontAttributesDirty = false
                 textValueDirty = false
                 applyFontAttributes(fontAttributes ?: defaultAttributes)
-                applyAttributedText(textValue as AttributedText)
+                applyAttributedText(textValue as? AttributedText, text)
             }
         } else {
             if (fontAttributesDirty) {
@@ -190,22 +234,37 @@ class TextViewHelper(private val view: TextView,
 
             if (textValueDirty) {
                 textValueDirty = false
-                applyTextSimple(textValue as? String)
+                applyTextSimple(text)
             }
         }
 
-        if (view is ValdiEditText && selectionDirty) {
+        if (editText != null) {
+            val currentSelection = selection
+            val textWasSet = editText.setTextGeneration != setTextGenerationBefore
+            if (currentSelection != null) {
+                if (selectionDirty || (matchIosTextSetCaret && textWasSet)) {
+                    editText.setSelectionClamped(currentSelection.first, currentSelection.second)
+                }
+            } else if (matchIosTextSetCaret && textWasSet) {
+                editText.setSelectionClamped(Int.MAX_VALUE, Int.MAX_VALUE)
+            }
+            selectionDirty = false
+        } else if (textHolder != null && selectionDirty) {
             selectionDirty = false
             selection?.let { (first, second) ->
-                view.setSelectionClamped(first, second)
+                textHolder.setValdiSelection(first, second)
             }
         }
     }
 
     private fun updateTextAutofit() {
-        if (fontAutofitDirty) {
+        val attrs = fontAttributes ?: defaultAttributes
+        // EditText auto-size is manual (system API is a no-op for EditText), so re-run on every
+        // layout so the size adjusts as the user types, not just when fontAttributes changes.
+        val needsEditTextAutofit = view is ValdiEditTextInput && attrs.adjustsFontSizeToFitWidth == true
+        if (fontAutofitDirty || needsEditTextAutofit) {
             fontAutofitDirty = false
-            applyFontAutofit(fontAttributes ?: defaultAttributes)
+            applyFontAutofit(attrs)
         }
     }
 
@@ -223,10 +282,30 @@ class TextViewHelper(private val view: TextView,
     }
 
     private fun applyTextSimple(text: String?) {
-        if (view is ValdiEditText) {
+        processedTextValue = null
+        clearTextAnimationState()
+        if (view is ValdiEditTextInput) {
             view.setTextAndSelection(text ?: "")
         } else {
             view.text = text
+        }
+    }
+
+    private fun textRequiresAttributedText(text: String?): Boolean {
+        return textRequiresAttributedText(text, fontAttributes)
+    }
+
+    private fun textRequiresAttributedText(text: String?, attributes: FontAttributes?): Boolean {
+        if (text.isNullOrEmpty() || attributes == null) {
+            return false
+        }
+
+        return when (attributes.textDecoration) {
+            // Plain underline can use TextView's native paint flag unless custom geometry requires a span.
+            TextDecoration.UNDERLINE -> attributes.customUnderlineStyle != null
+            TextDecoration.DASHED_UNDERLINE,
+            TextDecoration.DOTTED_UNDERLINE -> true
+            else -> false
         }
     }
 
@@ -235,7 +314,7 @@ class TextViewHelper(private val view: TextView,
         gestureRecognizers.removeGestureRecognizer(AttributedTextTapGestureRecognizer::class.java)
     }
 
-    private fun addAttributedTextTapGestureRecognizer(spannable: Spannable) {
+    private fun addAttributedTextTapGestureRecognizer() {
         val gestureRecognizers = ViewUtils.getOrCreateGestureRecognizers(this.view)
         var attributedTextTapGestureRecognizer = gestureRecognizers
                 .getGestureRecognizer(AttributedTextTapGestureRecognizer::class.java)
@@ -244,41 +323,284 @@ class TextViewHelper(private val view: TextView,
             gestureRecognizers.addGestureRecognizer(attributedTextTapGestureRecognizer)
         }
 
-        attributedTextTapGestureRecognizer.spannable = spannable
+        attributedTextTapGestureRecognizer.processedText = processedTextValue
     }
 
-    fun convertAttributedText(text: AttributedText): Spannable {
+    fun convertAttributedText(text: AttributedText, attributedTextAnimator: AttributedTextAnimator?): ValdiProcessedText {
         val fontAttributes = this.fontAttributes ?: defaultAttributes
         val density = view.resources.displayMetrics.density
-        return textConverter.convert(text, fontAttributes, this, disableTextReplacement, density)
+        return ValdiProcessedText.parse(
+            fontManager,
+            text,
+            fontAttributes,
+            this,
+            logger,
+            attributedTextAnimator,
+            disableTextReplacement,
+            density
+        )
     }
 
-    fun drawOnTopAttributedText(canvas: Canvas, layout: Layout, text: AttributedText) {
-        val fontAttributes = this.fontAttributes ?: defaultAttributes
-        textConverter.drawOnTop(canvas, layout, text, fontAttributes, this)
+    fun needsDrawOnTopAttributedText(): Boolean {
+        val processedText = processedTextValue ?: return false
+        return disableTextReplacement && processedText.hasOuterOutline
     }
 
-    private fun applyAttributedText(text: AttributedText) {
-        val spannable = convertAttributedText(text)
-        if (view is ValdiEditText) {
-            view.setTextAndSelection(text, spannable)
+    fun postInvalidateOnAnimationIfNeeded() {
+        val attributedTextAnimator = attributedTextAnimator
+        if (attributedTextAnimator?.hasAnimationRuns() != true) {
+            cancelAnimationFrameLoop()
+            return
+        }
+
+        val textAnimationGroup = textAnimationGroup
+        if (textAnimationGroup != null) {
+            textAnimationGroup.startTextAnimationFrameLoopIfNeeded()
+            return
+        }
+
+        postAnimationFrameCallback()
+    }
+
+    fun updateTextAnimationGroupRegistration() {
+        val group = nearestTextAnimationGroup()
+        if (group == textAnimationGroup) {
+            group?.let {
+                applyTextAnimationTimeline(it.textAnimationTimeline, 0)
+                it.markParticipantBaseIndexesDirty()
+            }
+            return
+        }
+
+        textAnimationGroup?.unregisterParticipant(this)
+        textAnimationGroup = group
+        if (group != null) {
+            group.registerParticipant(this)
         } else {
-            view.text = SpannableString(spannable)
+            applyTextAnimationTimeline(null, 0)
+        }
+    }
+
+    fun unregisterTextAnimationGroup() {
+        textAnimationGroup?.unregisterParticipant(this)
+    }
+
+    fun applyTextAnimationTimeline(timeline: AttributedTextAnimationTimeline?, basePartIndex: Int) {
+        textAnimationTimeline = timeline
+        textAnimationBasePartIndex = basePartIndex
+        attributedTextAnimator?.let {
+            it.groupedTimeline = timeline
+            it.basePartIndex = basePartIndex
+        }
+        if (timeline != null) {
+            cancelAnimationFrameLoop()
+        }
+    }
+
+    fun clearTextAnimationGroupRegistration() {
+        textAnimationGroup = null
+        applyTextAnimationTimeline(null, 0)
+    }
+
+    fun prepareGroupedTextAnimationFrame() {
+        attributedTextAnimator?.prepareGroupedFrame()
+    }
+
+    fun updateGroupedTextAnimationFrame(): Boolean {
+        val animator = attributedTextAnimator ?: return false
+        val spannable = view.text as? Spannable ?: return false
+        val hasActiveAnimations = animator.update(spannable)
+        textHolder?.refreshInlineTextAnimation()
+        if (hasActiveAnimations) {
+            view.invalidate()
+        }
+        return hasActiveAnimations
+    }
+
+    private fun nearestTextAnimationGroup(): ValdiTextAnimationGroup? {
+        var parent = view.parent
+        while (parent is ViewGroup) {
+            if (parent is ValdiTextAnimationGroup) {
+                return parent
+            }
+            parent = parent.parent
+        }
+        return null
+    }
+
+    private fun postAnimationFrameCallback() {
+        if (animationFrameCallbackPosted) {
+            return
+        }
+
+        animationFrameCallbackPosted = true
+        view.postOnAnimation(animationFrameCallback())
+    }
+
+    private fun animationFrameCallback(): Runnable {
+        val existingFrameCallback = animationFrameCallback
+        if (existingFrameCallback != null) {
+            return existingFrameCallback
+        }
+
+        return Runnable {
+            animationFrameCallbackPosted = false
+            val attributedTextAnimator = attributedTextAnimator ?: return@Runnable
+            val spannable = view.text as? Spannable ?: return@Runnable
+            val hasActiveAnimations = attributedTextAnimator.update(spannable)
+            textHolder?.refreshInlineTextAnimation()
+            if (hasActiveAnimations) {
+                postAnimationFrameCallback()
+            }
+        }.also {
+            animationFrameCallback = it
+        }
+    }
+
+    private fun cancelAnimationFrameLoop() {
+        if (animationFrameCallbackPosted) {
+            animationFrameCallback?.let { view.removeCallbacks(it) }
+            animationFrameCallbackPosted = false
+        }
+    }
+
+    fun drawOnTopAttributedText(canvas: Canvas, layout: Layout) {
+        val processedText = processedTextValue ?: return
+        processedText.drawOnTop(
+            canvas,
+            layout,
+            fontManager,
+            this
+        )
+    }
+
+    private fun applyAttributedText(attributedText: AttributedText?, text: String?) {
+        val processedText = if (attributedText != null) {
+            val animationTransformsSize = attributedText.getAnimationTransformsSize()
+            val animator = if (animationTransformsSize > 0) {
+                textAnimationPartCount = animationTransformsSize
+                updateTextAnimationGroupRegistration()
+                getOrCreateAttributedTextAnimator().also {
+                    it.groupedTimeline = textAnimationTimeline
+                    it.basePartIndex = textAnimationBasePartIndex
+                    it.beginSync()
+                }
+            } else {
+                clearTextAnimationState()
+                null
+            }
+            val convertedText = try {
+                convertAttributedText(attributedText, animator)
+            } finally {
+                animator?.endSync()
+            }
+            if (convertedText.animationTransformsCount > 0) {
+                textAnimationPartCount = convertedText.animationTransformsCount
+                updateTextAnimationGroupRegistration()
+            } else if (animator != null) {
+                clearTextAnimationState()
+            }
+            convertedText
+        } else {
+            clearTextAnimationState()
+            null
+        }
+        processedTextValue = processedText
+        val spannable = processedText?.spannable ?: convertTextToSpannable(text ?: "")
+
+        if (view is ValdiEditTextInput) {
+            if (attributedText != null) {
+                view.setTextAndSelection(attributedText, spannable)
+            } else {
+                view.setTextAndSelection(spannable)
+            }
+        } else {
+            if (processedText != null) {
+                setTextViewProcessedText(processedText)
+            } else {
+                view.text = spannable
+            }
         }
 
         needsUpdateOnLayoutCallbacks = true
 
-        val spans = spannable.getSpans(0, spannable.length, OnTapSpan::class.java)
-        if (spans.isNullOrEmpty()) {
-            removeAttributedTextTapGestureRecognizer()
-        } else {
-            addAttributedTextTapGestureRecognizer(spannable)
+        val activeSpannable = view.text as? Spannable ?: spannable
+        if (attributedText != null) {
+            attributedTextAnimator?.update(activeSpannable)
+            textHolder?.refreshInlineTextAnimation()
         }
+        postInvalidateOnAnimationIfNeeded()
+
+        if (processedText?.hasOnTap == true) {
+            addAttributedTextTapGestureRecognizer()
+        } else {
+            removeAttributedTextTapGestureRecognizer()
+        }
+    }
+
+    private fun setTextViewProcessedText(processedText: ValdiProcessedText) {
+        if (processedText.hasAnimationTransform) {
+            view.setText(processedText.spannable, TextView.BufferType.SPANNABLE)
+        } else {
+            view.text = processedText.spannable
+        }
+    }
+
+    private fun getOrCreateAttributedTextAnimator(): AttributedTextAnimator {
+        val animator = attributedTextAnimator
+        if (animator != null) {
+            return animator
+        }
+
+        return AttributedTextAnimator().also {
+            it.groupedTimeline = textAnimationTimeline
+            it.basePartIndex = textAnimationBasePartIndex
+            it.viewNode = viewNode
+            attributedTextAnimator = it
+        }
+    }
+
+    fun saveTextAnimationState() {
+        attributedTextAnimator?.let {
+            it.saveStoredAnimationStartTimes()
+        }
+    }
+
+    fun prepareForRecycling() {
+        saveTextAnimationState()
+        clearTextAnimationState()
+    }
+
+    private fun clearAttributedTextAnimator() {
+        val animator = attributedTextAnimator ?: return
+        animator.saveStoredAnimationStartTimes()
+        animator.clear(view.text as? Spannable)
+        attributedTextAnimator = null
+    }
+
+    private fun clearTextAnimationState() {
+        textAnimationPartCount = 0
+        unregisterTextAnimationGroup()
+        clearAttributedTextAnimator()
+        cancelAnimationFrameLoop()
+    }
+
+    private fun convertTextToSpannable(text: String): Spannable {
+        val spannable = SpannableString(text)
+        if (text.isEmpty()) {
+            return spannable
+        }
+
+        val attributes = fontAttributes ?: defaultAttributes
+        attributes.enumerateSpans(fontManager, this, disableTextReplacement, true) {
+            spannable.setSpan(it, 0, spannable.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        return spannable
     }
 
     // Apply all known specified text rendering attributes
     private fun applyFontAttributes(attributes: FontAttributes) {
-        view.typeface = attributes.resolveTypeface(textConverter.fontManager, this)
+        view.typeface = attributes.resolveTypeface(fontManager, this)
         view.setTextColor(attributes.color) // TODO - this could be its own attribute instead
         applyLetterSpacing(attributes)
         applyTextSize(attributes)
@@ -403,22 +725,36 @@ class TextViewHelper(private val view: TextView,
         if (!managesNumberOfLines) {
             return
         }
-        val numberOfLines = attributes.numberOfLines ?: 1
+        val numberOfLines = attributes.numberOfLines ?: defaultNumberOfLines
         if (numberOfLines <= 0) {
             view.maxLines = Int.MAX_VALUE
         } else {
             view.maxLines = numberOfLines
         }
+        if (textHolder is ValdiEditTextMultiline) {
+            textHolder.backingEditTextInput.onNumberOfLinesChanged()
+        }
     }
 
     // Compute the line height after the view.textSize has been resolved
     private fun applyLineHeight(attributes: FontAttributes) {
-        val lineHeightRatio = attributes.lineHeight
-        if (lineHeightRatio != null) {
+        val lineHeightAbsolute = attributes.lineHeightAbsolute
+        if (lineHeightAbsolute != null) {
+            view.paint.getFontMetrics(fontMetrics)
+            val resolvedLineHeight = coordinateResolver.toPixelF(lineHeightAbsolute)
+            val fontLineHeight = fontMetrics.descent - fontMetrics.ascent
+            val lineSpacingExtra = resolvedLineHeight - fontLineHeight
+            view.setLineSpacing(lineSpacingExtra, 1.0f)
+            view.setPadding(0, (lineSpacingExtra / 2.0f).toInt(), 0, 0)
+            return
+        }
+
+        val lineHeight = attributes.lineHeight
+        if (lineHeight != null) {
             view.paint.getFontMetrics(fontMetrics)
             val lineOverflow = (fontMetrics.bottom - fontMetrics.top) / (fontMetrics.descent - fontMetrics.ascent)
-            val lineHeightExtra = ((lineHeightRatio - 1) * view.textSize * lineOverflow).toInt()
-            view.setLineSpacing(0.0f, lineHeightRatio)
+            val lineHeightExtra = ((lineHeight - 1) * view.textSize * lineOverflow).toInt()
+            view.setLineSpacing(0.0f, lineHeight)
             view.setPadding(0, lineHeightExtra, 0, 0)
         } else {
             view.setLineSpacing(0.0f, 1.0f)
@@ -451,8 +787,11 @@ class TextViewHelper(private val view: TextView,
         val textDecoration = attributes.textDecoration
         if (textDecoration != null) {
             paintFlags = when (textDecoration) {
-                TextDecoration.UNDERLINE -> flagUnderline
+                // Custom underline geometry is drawn by CustomUnderlineSpan; keep the native flag off.
+                TextDecoration.UNDERLINE -> if (attributes.customUnderlineStyle == null) flagUnderline else 0
                 TextDecoration.STRIKETHROUGH -> flagStrike
+                TextDecoration.DASHED_UNDERLINE -> 0
+                TextDecoration.DOTTED_UNDERLINE -> 0
                 TextDecoration.NONE -> 0
             }
         }
@@ -490,7 +829,47 @@ class TextViewHelper(private val view: TextView,
         val minimumScaleFactor = attributes.minimumScaleFactor ?: 0f
         val minSize = Math.max((minimumScaleFactor * fontSizeValue).toInt(), 1)
         val maxSize = fontSizeValue.toInt()
-        TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(view, minSize, maxSize, 1, fontSizeUnit)
+        if (view is ValdiEditTextInput) {
+            // EditText.supportsAutoSizeText() returns false at the framework level, making
+            // TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration a silent no-op.
+            // Manually measure and set font size instead.
+            applyTextShrinkingEditText(fontSizeValue, fontSizeUnit, minimumScaleFactor)
+        } else {
+            TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(view, minSize, maxSize, 1, fontSizeUnit)
+        }
+    }
+
+    private fun applyTextShrinkingEditText(maxFontSize: Float, fontSizeUnit: Int, minimumScaleFactor: Float) {
+        val dm = view.resources.displayMetrics
+        val maxPx = TypedValue.applyDimension(fontSizeUnit, maxFontSize, dm)
+        val minPx = maxOf(minimumScaleFactor * maxPx, 1f)
+        val availableWidth = (view.width - view.compoundPaddingLeft - view.compoundPaddingRight).toFloat()
+        if (availableWidth <= 0f) return
+        val textPaint = TextPaint(view.paint)
+        val text = textForAutofit()
+        textPaint.textSize = maxPx
+        if (Layout.getDesiredWidth(text, textPaint) <= availableWidth) {
+            view.setTextSize(TypedValue.COMPLEX_UNIT_PX, maxPx)
+            return
+        }
+        var lo = minPx
+        var hi = maxPx
+        while (hi - lo > 0.5f) {
+            val mid = (lo + hi) / 2f
+            textPaint.textSize = mid
+            if (Layout.getDesiredWidth(text, textPaint) <= availableWidth) lo = mid else hi = mid
+        }
+        // Preserve 1-px-step granularity of the original linear scan to avoid snapshot drift.
+        val snapped = maxOf(maxPx - kotlin.math.ceil((maxPx - lo).toDouble()).toFloat(), minPx)
+        view.setTextSize(TypedValue.COMPLEX_UNIT_PX, snapped)
+    }
+
+    private fun textForAutofit(): CharSequence {
+        val text = view.text ?: ""
+        if (view is ValdiEditTextInput && text.isEmpty()) {
+            return view.hint ?: ""
+        }
+        return text
     }
 
     override fun onFontMissing(fontDescriptor: FontDescriptor) {
@@ -504,7 +883,7 @@ class TextViewHelper(private val view: TextView,
             return
         }
 
-        val disposable = textConverter.fontManager.load(fontDescriptor, object : LoadCompletion<Typeface> {
+        val disposable = fontManager.load(fontDescriptor, object : LoadCompletion<Typeface> {
             override fun onSuccess(item: Typeface) {
                 runOnMainThreadIfNeeded {
                     onMissingFontLoadSuccess(fontDescriptor)

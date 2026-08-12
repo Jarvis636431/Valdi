@@ -142,6 +142,16 @@ def _output_declaration_file_path_for_legacy_source_file(f, module_name, module_
     return dts_output_path
 
 def get_sql_dts_paths(db_names, sql_srcs, module_name, module_directory):
+    return _get_sql_generated_paths(db_names, sql_srcs, module_name, module_directory, TYPESCRIPT_OUTPUT_DIR, ".d.ts")
+
+def get_sql_js_paths(db_names, sql_srcs, module_name, module_directory):
+    # Sibling .js outputs of the .sq generated .ts sources. The compiler already
+    # emits them next to the .d.ts (see ClientSqlProcessor + the Valdi ts→js
+    # pass), so declaring them here just surfaces them to Bazel so the web
+    # collapse pipeline can bundle them into composer_example_npm.
+    return _get_sql_generated_paths(db_names, sql_srcs, module_name, module_directory, "web/debug/assets", ".js")
+
+def _get_sql_generated_paths(db_names, sql_srcs, module_name, module_directory, base_output_dir, suffix):
     if not db_names:
         return []
     result = []
@@ -157,17 +167,17 @@ def get_sql_dts_paths(db_names, sql_srcs, module_name, module_directory):
         db_name = replace_prefix(sql_file_path, prefix_to_drop, "").split("/")[0]
 
         prefix_to_drop = paths.join(prefix_to_drop, db_name) + "/"
-        prefix_to_add = paths.join(TYPESCRIPT_OUTPUT_DIR, module_name, "src/sqlgen/")
+        prefix_to_add = paths.join(base_output_dir, module_name, "src/sqlgen/")
 
-        suffix = sql_file_path.removeprefix(prefix_to_drop).removesuffix(".sq")
-        output_location = paths.join(prefix_to_add, suffix)
+        rel_suffix = sql_file_path.removeprefix(prefix_to_drop).removesuffix(".sq")
+        output_location = paths.join(prefix_to_add, rel_suffix)
 
-        result.append(output_location + "Types.d.ts")
-        result.append(output_location + "Queries.d.ts")
+        result.append(output_location + "Types" + suffix)
+        result.append(output_location + "Queries" + suffix)
 
-    # Also add database dts files
+    # Also add per-database output files
     for db_name in db_names:
-        result.append(paths.join(TYPESCRIPT_OUTPUT_DIR, module_name, "src/sqlgen", db_name + ".d.ts"))
+        result.append(paths.join(base_output_dir, module_name, "src/sqlgen", db_name + suffix))
 
     return result
 
@@ -236,14 +246,21 @@ def get_resources_dts_paths(module_name, resources):
 
     resources_paths = []
     for current_directory in filtered_variant_directories:
-        # by default, we use res.ts
-        # nested subfolders use the name of the folder as the name of their generated typescript file, inside a res directory
+        # The compiler writes res.ts into generated_ts/ as a side effect (for VSCode/linter autocomplete).
+        # It also emits res.d.ts into typescript/output/ via TypeScript compilation (for downstream modules).
+        # Both must be declared outputs so they are cached and available to consumers.
         if current_directory == "res":
-            output_basename = "res.d.ts"
+            ts_basename = "res.ts"
+            dts_basename = "res.d.ts"
         else:
-            output_basename = paths.join("res", current_directory + ".d.ts")
+            ts_basename = paths.join("res", current_directory + ".ts")
+            dts_basename = paths.join("res", current_directory + ".d.ts")
 
-        resources_paths.append(paths.join(TYPESCRIPT_OUTPUT_DIR, module_name, output_basename))
+        # Declare the generated .ts file so it gets cached and downloaded by the linter sync
+        resources_paths.append(paths.join(TYPESCRIPT_GENERATED_TS_DIR, module_name, ts_basename))
+
+        # Declare the compiled .d.ts file for downstream TypeScript compilation
+        resources_paths.append(paths.join(TYPESCRIPT_OUTPUT_DIR, module_name, dts_basename))
 
     return resources_paths
 

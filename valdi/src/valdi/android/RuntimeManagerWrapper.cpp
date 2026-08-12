@@ -19,7 +19,7 @@
 #include "valdi/runtime/Resources/AssetLoader.hpp"
 #include "valdi/runtime/Resources/AssetLoaderManager.hpp"
 #include "valdi/runtime/Resources/DiskCacheImpl.hpp"
-#include "valdi/runtime/Views/Measure.hpp"
+#include "valdi_core/cpp/Views/Measure.hpp"
 
 #include "snap_drawing/cpp/Text/LoadableTypeface.hpp"
 #include "valdi/snap_drawing/Modules/SnapDrawingModuleFactoriesProvider.hpp"
@@ -170,7 +170,7 @@ RuntimeManagerWrapper::RuntimeManagerWrapper(JavaEnv env,
     }
 #endif
     _runtimeManager->getAssetLoaderManager()->registerAssetLoaderFactory(
-        Valdi::makeShared<AndroidAssetLoaderFactory>(_resourceLoader));
+        Valdi::makeShared<AndroidAssetLoaderFactory>(_resourceLoader, _runtimeManager->getWorkerQueue()));
 }
 
 RuntimeManagerWrapper::~RuntimeManagerWrapper() {

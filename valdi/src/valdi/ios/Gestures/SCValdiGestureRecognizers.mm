@@ -12,6 +12,7 @@
 #import "valdi_core/SCValdiTouches.h"
 #import "valdi_core/SCValdiMarshaller+CPP.h"
 #import "valdi_core/SCValdiError.h"
+#import "valdi_core/SCValdiLogger.h"
 
 #import <UIKit/UIGestureRecognizerSubclass.h>
 
@@ -25,7 +26,7 @@ static BOOL SCValdiCallTouchPredicate(UIGestureRecognizer *gestureRecognizer, id
                                              [gestureRecognizer locationInView:gestureRecognizer.view],
                                              gestureRecognizer.state,
                                              SCValdiGetPointerDataFromGestureRecognizer(gestureRecognizer));
-    return SCValdiCallActionWithEvent(predicate, tapEvent, Valdi::ValueFunctionFlagsCallSync);
+    return SCValdiCallPredicateWithEvent(predicate, gestureRecognizer.view, tapEvent, "touch_predicate");
 }
 
 static void SCValdiHandleTouchEvent(UIView *view,
@@ -39,10 +40,14 @@ static void SCValdiHandleTouchEvent(UIView *view,
         return;
     }
 
+    if (gestureType == SCValdiGestureTypeTap) {
+        SCLogValdiInfo(@"[Valdi] tap dispatching to JS");
+    }
+
     auto pointerLocations = SCValdiGetPointerDataFromEvent(uiEvent);
     auto tapEvent = SCValdiMakeTouchEvent(view, gestureLocation, state, pointerLocations);
     if (!tapEvent.isNull()) {
-        SCValdiForwardTouchAndCallAction(view, uiEvent, gestureType, state, action, tapEvent, SCValdiGetCallFlags(state));
+        SCValdiForwardTouchAndCallAction(view, uiEvent, gestureType, state, action, tapEvent, SCValdiGetCallFlags(view, state));
     }
 }
 
@@ -148,6 +153,15 @@ static void SCValdiHandleTouchEvent(UIView *view,
 {
     [self setFunction:nil];
     [super reset];
+}
+
+- (BOOL)canBePreventedByGestureRecognizer:(UIGestureRecognizer *)preventingGestureRecognizer
+{
+    if (_cannotBePreventedByOtherGestureRecognizers) {
+        return NO;
+    }
+
+    return [super canBePreventedByGestureRecognizer:preventingGestureRecognizer];
 }
 
 - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer
@@ -428,7 +442,7 @@ Valdi::Value SCValdiMakeDragEvent(UIPanGestureRecognizer *gestureRecognizer) {
     }
 
     auto event = SCValdiMakeDragEvent(self);
-    return SCValdiCallActionWithEvent(_predicate, event, Valdi::ValueFunctionFlagsCallSync);
+    return SCValdiCallPredicateWithEvent(_predicate, self.view, event, "drag_should_begin");
 }
 
 - (void)_handleGestureRecognizer:(id)sender
@@ -436,7 +450,7 @@ Valdi::Value SCValdiMakeDragEvent(UIPanGestureRecognizer *gestureRecognizer) {
     auto event = SCValdiMakeDragEvent(self);
 
     UIGestureRecognizerState state = self.state;
-    SCValdiForwardTouchAndCallAction(self.view, _lastEvent, SCValdiGestureTypeDrag, state, _function, event, SCValdiGetCallFlags(state));
+    SCValdiForwardTouchAndCallAction(self.view, _lastEvent, SCValdiGestureTypeDrag, state, _function, event, SCValdiGetCallFlags(self.view, state));
 }
 
 - (BOOL)shouldRequireFailureOfGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer
@@ -543,14 +557,14 @@ Valdi::Value SCValdiMakePinchEvent(UIPinchGestureRecognizer *gestureRecognizer) 
     }
 
     auto event = SCValdiMakePinchEvent(self);
-    return SCValdiCallActionWithEvent(_predicate, event, Valdi::ValueFunctionFlagsCallSync);
+    return SCValdiCallPredicateWithEvent(_predicate, self.view, event, "pinch_should_begin");
 }
 
 - (void)_handleGestureRecognizer:(id)sender
 {
     auto pinchEvent = SCValdiMakePinchEvent(self);
     UIGestureRecognizerState state = self.state;
-    SCValdiForwardTouchAndCallAction(self.view, _lastEvent, SCValdiGestureTypePinch, state, _function, pinchEvent, SCValdiGetCallFlags(state));
+    SCValdiForwardTouchAndCallAction(self.view, _lastEvent, SCValdiGestureTypePinch, state, _function, pinchEvent, SCValdiGetCallFlags(self.view, state));
 }
 
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer
@@ -647,14 +661,14 @@ Valdi::Value SCValdiMakeRotationEvent(UIRotationGestureRecognizer *gestureRecogn
     }
 
     auto event = SCValdiMakeRotationEvent(self);
-    return SCValdiCallActionWithEvent(_predicate, event, Valdi::ValueFunctionFlagsCallSync);
+    return SCValdiCallPredicateWithEvent(_predicate, self.view, event, "rotate_should_begin");
 }
 
 - (void)_handleGestureRecognizer:(id)sender
 {
     auto event = SCValdiMakeRotationEvent(self);
     UIGestureRecognizerState state = self.state;
-    SCValdiForwardTouchAndCallAction(self.view, _lastEvent, SCValdiGestureTypeRotate, state, _function, event, SCValdiGetCallFlags(state));
+    SCValdiForwardTouchAndCallAction(self.view, _lastEvent, SCValdiGestureTypeRotate, state, _function, event, SCValdiGetCallFlags(self.view, state));
 }
 
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer

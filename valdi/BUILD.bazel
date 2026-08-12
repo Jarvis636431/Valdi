@@ -72,12 +72,27 @@ selects.config_setting_group(
     ],
 )
 
+custom_selects.config_setting_inverse(
+    "not_use_local_compiler",
+    inverse_of = "//bzl/valdi:use_local_compiler_enabled",
+)
+
+# JSCore on Linux requires the prebuilt libjsc.so, which is only available on
+# internal builds (use_local_compiler=false). External builds use Hermes/QuickJS.
+selects.config_setting_group(
+    name = "jscore_available_on_linux",
+    match_all = [
+        "//bzl/conditions:linux_x64",
+        ":not_use_local_compiler",
+    ],
+)
+
 selects.config_setting_group(
     name = "jscore_enabled",
     match_any = [
         "//bzl/conditions:ios",
         "//bzl/conditions:macos",
-        "//bzl/conditions:linux_x64",
+        ":jscore_available_on_linux",
     ],
 )
 
@@ -116,6 +131,7 @@ alias(
         "//bzl/conditions:ios": ":valdi_ios",
         "//bzl/conditions:android_with_jni": ":valdi_android",
         "//bzl/conditions:macos": ":valdi_macos",
+        "//bzl/conditions:linux": ":valdi_linux",
         "//conditions:default": ":valdi_runtime",
     }),
     visibility = ["//visibility:public"],
@@ -169,6 +185,23 @@ cc_library(
         ":valdi_runtime",
         "//snap_drawing",
         "@zlib_chromium",
+    ],
+)
+
+cc_library(
+    name = "valdi_svg",
+    srcs = glob([
+        "src/valdi/svg/**/*.cpp",
+    ]),
+    hdrs = glob([
+        "src/valdi/svg/**/*.hpp",
+    ]),
+    copts = CC_COMPILER_FLAGS,
+    strip_include_prefix = "src",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//snap_drawing:snap_drawing_cc",
+        "//valdi_core:valdi_core_cc",
     ],
 )
 
@@ -268,7 +301,9 @@ cc_library(
         "src/valdi/v8/**/*.h",
         "src/valdi/v8/**/*.hpp",
     ]),
-    copts = CC_COMPILER_FLAGS,
+    copts = CC_COMPILER_FLAGS + [
+        "-Wno-cast-function-type-mismatch",
+    ],
     defines = [
         "VALDI_HAS_V8",
         "V8_COMPRESS_POINTERS",
@@ -296,6 +331,7 @@ cc_library(
         "src",
         "src/bindings/include",
     ],
+    target_compatible_with = ["@platforms//os:android"],
     deps = [
         ":valdi_runtime",
         "//valdi:djinni_generated_cc",
@@ -405,29 +441,18 @@ cc_library(
         ":valdi_jni",
         ":valdi_runtime_with_vm",
         ":valdi_snap_drawing",
+        ":valdi_svg",
+        "//libs/utils:utils_core_cc",
         "//libs/utils:utils_encoding_cc",
         "//valdi_core:valdi_core_android",
     ],
     alwayslink = True,
 )
 
-cc_library(
+alias(
     name = "valdi_proto_cc",
-    srcs = glob([
-        "protogen-lite/valdi/**/*.h",
-        "protogen-lite/valdi/**/*.cc",
-    ]),
-    hdrs = glob(["protogen-lite/valdi/**/*.h"]),
-    copts = COMMON_COMPILE_FLAGS + [
-        "-Wno-deprecated-declarations",
-        "-Wno-gcc-compat",
-        "-Wno-zero-length-array",
-    ],
-    defines = ["GRPC_USE_PROTO_LITE"],
-    strip_include_prefix = "protogen-lite",
-    tags = ["exported"],
+    actual = "//compiler/compiler:valdi_proto_cc",
     visibility = ["//visibility:public"],
-    deps = ["@protobuf_cpp//:protobuf_lite"],
 )
 
 ANDROID_XML_RES = glob(["res/xml/**/*.xml"])
@@ -493,6 +518,66 @@ kt_android_library(
     visibility = ["//visibility:public"],
     deps = [
         ":valdi_java",
+        # AppBootstrapActivity extends AppCompatActivity. This comes in transitively via
+        # :valdi_java in a standalone build, but not in Snap's linked build where
+        # @android_mvn points at a maven namespace that does not re-export it.
+        "@android_mvn//:androidx_appcompat_appcompat",
+    ],
+)
+
+# Plain Espresso/Hamcrest test bindings over Valdi's element/view-node API
+# (com.snap.valdi.test.*). Lets instrumented tests locate and assert on Valdi
+# elements mounted in a ValdiRootView. Only depends on the public Valdi Java API
+# plus Espresso/Hamcrest/JUnit - no Snap-internal runtime glue.
+kt_android_library(
+    name = "valdi_android_test_support",
+    testonly = True,
+    srcs = glob([
+        "src/android_test_support/java/**/*.kt",
+    ]),
+    custom_package = "com.snap.valdi.test",
+    kotlinc_opts = ":kotlinc_opts",
+    manifest = "src/valdi/android/AndroidManifest.xml",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":valdi_java",
+        "@android_mvn//:androidx_annotation_annotation",
+        "@test_mvn//:androidx_test_core",
+        "@test_mvn//:androidx_test_espresso_espresso_core",
+        "@test_mvn//:androidx_test_monitor",
+        "@test_mvn//:junit_junit",
+        "@test_mvn//:org_hamcrest_hamcrest_core",
+        "@test_mvn//:org_hamcrest_hamcrest_library",
+    ],
+)
+
+# Boots a Valdi runtime for instrumented tests and mounts a single view in a host
+# activity, so the bindings in :valdi_android_test_support have something to point at.
+# Built only on the open-source runtime (:valdi_android_support) - Snap's internal
+# equivalent is //platform/composer/test-support:runtime-bootstrap, which wires the
+# same rule up to Snap's app-specific runtime factory and schedulers instead.
+kt_android_library(
+    name = "valdi_android_test_runtime",
+    testonly = True,
+    srcs = glob([
+        "src/android_test_runtime/java/**/*.kt",
+    ]),
+    custom_package = "com.snap.valdi.test.runtime",
+    # Merges ValdiTestHostActivity into the consuming instrumentation APK's manifest, so
+    # tests can launch it without declaring it themselves. Must be an int, not True:
+    # Snap's rules_kotlin fork declares this attribute as attr.int().
+    exports_manifest = 1,
+    kotlinc_opts = ":kotlinc_opts",
+    manifest = "src/android_test_runtime/AndroidManifest.xml",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":valdi_android_support",
+        ":valdi_android_test_support",
+        ":valdi_java",
+        "@android_mvn//:androidx_appcompat_appcompat",
+        "@test_mvn//:androidx_test_core",
+        "@test_mvn//:androidx_test_monitor",
+        "@test_mvn//:junit_junit",
     ],
 )
 
@@ -513,6 +598,7 @@ kt_jvm_test(
         "@android_mvn//:org_junit_vintage_junit_vintage_engine",
     ],
     deps = [
+        ":valdi_android_test_support",
         ":valdi_java",
         "//src/valdi_modules/src/valdi/valdi_test:valdi_test_kt",
         "@android_mvn//:androidx_test_core",
@@ -523,6 +609,7 @@ kt_jvm_test(
         "@android_mvn//:org_robolectric_android_all",
         "@android_mvn//:org_robolectric_annotations",
         "@android_mvn//:org_robolectric_robolectric",
+        "@test_mvn//:androidx_test_espresso_espresso_core",
     ],
 )
 
@@ -586,9 +673,11 @@ objc_library(
         "src/bindings/include",
     ],
     tags = ["exported"],
+    target_compatible_with = ["@platforms//os:ios"],
     deps = [
         ":valdi_runtime_with_vm",
         ":valdi_snap_drawing",
+        ":valdi_svg",
         "//libs/utils:utils_obj_cpp_ptr_wrapper",
         "//src/valdi_modules/src/valdi/drawing:drawing_objc",
         "//valdi:djinni_objc_cpp",
@@ -619,6 +708,7 @@ objc_library(
         "CoreImage",
         "Security",
     ],
+    target_compatible_with = ["@platforms//os:ios"],
     visibility = ["//visibility:public"],
     deps = [
         ":valdi_cpp_ios",
@@ -637,6 +727,7 @@ objc_library(
     copts = COMPILER_FLAGS + ["-I."],
     defines = SNAP_DRAWING_ENABLED_DEFINES,
     module_name = "ValdiSwift",
+    target_compatible_with = ["@platforms//os:ios"],
     visibility = ["//visibility:public"],
     deps = [
         ":valdi_ios",
@@ -661,10 +752,35 @@ objc_library(
     copts = ["-I."],
     includes = ["src"],
     module_name = "ValdiIosObjcTests",
+    target_compatible_with = ["@platforms//os:ios"],
     deps = [
         ":valdi_ios",
         "//src/valdi_modules/src/valdi/valdi_test:valdi_test_objc",
         "@ocmock",
+    ],
+)
+
+ios_unit_test(
+    name = "valdi_ios_perf_test",
+    minimum_os_version = "13.0",
+    runner = "@build_bazel_rules_apple//apple/testing/default_runner:ios_xctestrun_ordered_runner",
+    deps = [":objc_perf_tests_lib"],
+)
+
+# Deliberately depends on :valdi_ios only (no valdi_test fixtures) so the
+# lock-contention coverage stays runnable independently of the heavier test deps.
+objc_library(
+    name = "objc_perf_tests_lib",
+    testonly = True,
+    srcs = glob([
+        "test/ios_perf/**/*.mm",
+    ]),
+    copts = ["-I."],
+    includes = ["src"],
+    module_name = "ValdiIosObjcPerfTests",
+    target_compatible_with = ["@platforms//os:ios"],
+    deps = [
+        ":valdi_ios",
     ],
 )
 
@@ -691,6 +807,9 @@ objc_library(
 macos_unit_test(
     name = "valdi_macos_objc_test",
     minimum_os_version = "10.15",
+    # Default runner drives xcodebuild, which needs testmanagerd (a GUI session
+    # service). CI runs headless, so use the xctest-agent runner instead.
+    runner = "//bzl/testing:macos_xctest_agent_runner",
     deps = [":macos_unit_tests_lib"],
 )
 
@@ -708,6 +827,7 @@ swift_library(
         "test/ios_swift/**/*.swift",
     ]),
     module_name = "ValdiIosSwiftTests",
+    target_compatible_with = ["@platforms//os:ios"],
     deps = [
         ":valdi_ios",
         "//valdi_core:valdi_core_swift_marshaller",
@@ -762,6 +882,15 @@ valdi_test(
     ],
 )
 
+valdi_test(
+    name = "test_svg",
+    srcs = glob(["test/svg/**/*.cpp"]),
+    deps = [
+        ":valdi_svg",
+        "//snap_drawing:test_utils",
+    ],
+)
+
 # Embed generated .valdiarchive containing the fake uploaded resources
 valdi_static_resource(
     name = "remote_assets_static_res",
@@ -780,9 +909,39 @@ valdi_test(
     deps = [
         ":test_utils",
         ":valdi_runtime_with_vm",
+        "//src/valdi_modules/src/cpp/valdi_http:valdi_http_cpp",
         "//src/valdi_modules/src/valdi/persistence:persistence_native",
         "//src/valdi_modules/src/valdi/valdi_core:valdi_core_native",
         "//src/valdi_modules/src/valdi/valdi_protobuf:valdi_protobuf_native",
+        "//tsn",
+        "//valdi/testdata/resources/modules/local:local_native",
+        "//valdi/testdata/resources/modules/remote:remote_native",
+        "//valdi/testdata/resources/modules/remote_assets:remote_assets_native",
+        "//valdi/testdata/resources/modules/test:test_cpp",
+        "//valdi/testdata/resources/modules/test:test_native",
+        "//valdi/testdata/resources/modules/test2:test2_native",
+        "//valdi/testdata/resources/modules/test_async_strict:test_async_strict_native",
+    ],
+)
+
+valdi_test(
+    name = "test_layout",
+    size = "large",
+    srcs = [
+        "test/integration/JSBridgeTestFixture.cpp",
+        "test/integration/JSIntegrationTestsUtils.cpp",
+        "test/integration/LayoutRegression_tests.cpp",
+        "test/integration/RuntimeTestsUtils.cpp",
+        "test/integration/TSNTestUtils.cpp",
+    ],
+    hdrs = glob(["test/integration/**/*.hpp"]),
+    deps = [
+        ":test_utils",
+        ":valdi_runtime_with_vm",
+        "//src/valdi_modules/src/valdi/persistence:persistence_native",
+        "//src/valdi_modules/src/valdi/valdi_core:valdi_core_native",
+        "//src/valdi_modules/src/valdi/valdi_protobuf:valdi_protobuf_native",
+        "//src/valdi_modules/src/valdi/valdi_standalone:valdi_standalone_native",
         "//tsn",
         "//valdi/testdata/resources/modules/local:local_native",
         "//valdi/testdata/resources/modules/remote:remote_native",
@@ -803,6 +962,15 @@ valdi_test(
     ],
 )
 
+valdi_test(
+    name = "test_linux",
+    srcs = glob(["test/linux/**/*.cpp"]),
+    deps = [
+        ":valdi_standalone_runtime",
+        "//valdi_core",
+    ],
+)
+
 cc_test(
     name = "test",
     linkstatic = 1,
@@ -812,6 +980,19 @@ cc_test(
         ":test_integration_lib",
         ":test_runtime_lib",
         ":test_snap_drawing_lib",
+        ":test_svg_lib",
+        "@gtest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "test_linux_bin",
+    linkstatic = 1,
+    tags = ["valdi_linux_test"],
+    target_compatible_with = ["@platforms//os:linux"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":test_linux_lib",
         "@gtest//:gtest_main",
     ],
 )
@@ -823,6 +1004,7 @@ cc_binary(
         "test/benchmark/ProtobufBenchmark.cpp",
     ]),
     linkstatic = True,
+    tags = ["manual"],  # Source references deleted JSModule.hpp
     deps = [
         ":test_utils",
         ":valdi_runtime_with_vm",
@@ -838,6 +1020,7 @@ cc_binary(
         "test/benchmark/string_benchmark.cpp",
     ]),
     linkstatic = True,
+    tags = ["manual"],  # Source references deleted FlatMap type
     deps = [
         ":benchmark_utils",
         "//valdi_core",
@@ -893,6 +1076,7 @@ cc_binary(
     copts = [
         "-DV8_COMPRESS_POINTERS",
     ],
+    target_compatible_with = ["@platforms//os:android"],
     deps = [
         ":valdi_runtime",
         ":valdi_v8",
@@ -922,6 +1106,26 @@ objc_library(
         "QuartzCore",
         "MetalKit",
     ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":valdi_runtime_with_vm",
+        ":valdi_snap_drawing",
+        ":valdi_standalone_runtime",
+    ],
+)
+
+cc_library(
+    name = "valdi_linux",
+    srcs = glob([
+        "src/valdi/linux/**/*.c",
+        "src/valdi/linux/**/*.cpp",
+    ]),
+    hdrs = glob([
+        "src/valdi/linux/**/*.h",
+        "src/valdi/linux/**/*.hpp",
+    ]),
+    strip_include_prefix = "src",
+    target_compatible_with = ["@platforms//os:linux"],
     visibility = ["//visibility:public"],
     deps = [
         ":valdi_runtime_with_vm",
@@ -1049,6 +1253,7 @@ cc_library(
     includes = [
         "generated-src/jni",
     ],
+    target_compatible_with = ["@platforms//os:android"],
     visibility = ["//visibility:public"],
     deps = [
         ":djinni_generated_cc",

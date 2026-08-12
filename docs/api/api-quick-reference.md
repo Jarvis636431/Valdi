@@ -205,7 +205,7 @@ myScrollRef.setAttribute('contentOffsetAnimated', true);
   value="Hello World"    // or attributedText
   
   // Text styling
-  font="AvenirNext-Bold 16 unscaled 16"
+  font="Montserrat-Bold 16 unscaled 16"
   color="#000000"
   textGradient="linear-gradient(#ff0000, #0000ff)"
   textShadow="rgba(0,0,0,0.1) 1 1 1 1"
@@ -213,8 +213,9 @@ myScrollRef.setAttribute('contentOffsetAnimated', true);
   // Layout
   numberOfLines={2}      // 0 = unlimited
   textAlign="left"       // or "center", "right", "justified"
-  textDecoration="none"  // or "underline", "strikethrough"
-  lineHeight={1.2}       // ratio of font height
+  textDecoration="none"  // or "underline", "dashed-underline", "dotted-underline", "strikethrough"
+  lineHeight={24}        // explicit line height in points
+  lineHeightMultiple={1.2} // ratio of font height
   letterSpacing={0}      // points
   textOverflow="ellipsis" // or "clip"
   
@@ -277,6 +278,11 @@ myTextFieldRef.setAttribute('focused', true);
   // Similar to textfield, plus:
   returnType="linereturn" // or any TextFieldReturnKeyText
   textGravity="top"       // or "center", "bottom"
+  numberOfLines={2}       // 0 means unlimited
+  textDecoration="underline" // or "none", "strikethrough", "dashed-underline", "dotted-underline"
+  lineHeight={24}         // explicit line height in points
+  lineHeightMultiple={1.2} // ratio of font height
+  selectable={true}       // text selection
   closesWhenReturnKeyPressed={false}
   
   // Background effect
@@ -477,6 +483,18 @@ class MyComponent extends Component {
 </scroll>
 ```
 
+### Web Content
+
+```tsx
+<webview
+  width="100%"
+  height={400}
+  controller={this.webViewController}
+/>
+```
+
+Create the controller with `WebView.createController()` from `valdi_webview`, then call controller methods such as `load`, `reload`, and `goBack` imperatively.
+
 ### Form Input
 
 ```tsx
@@ -540,4 +558,3 @@ if (element) {
 - [Core Images](../docs/core-images.md) - Working with images
 - [Core Scrolls](../docs/core-scrolls.md) - ScrollView patterns
 - [Core Text](../docs/core-text.md) - Text and input components
-

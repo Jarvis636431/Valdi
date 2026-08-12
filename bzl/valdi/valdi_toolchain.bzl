@@ -5,7 +5,6 @@ ValdiCompilerInfo = provider(
     fields = [
         "compiler",
         "compiler_toolbox",
-        "pngquant",
         "companion",
         "minify_config",
         "sqldelight_compiler",
@@ -17,7 +16,6 @@ def _valdi_toolchain_impl(ctx):
         info = ValdiCompilerInfo(
             compiler = ctx.attr.compiler,
             compiler_toolbox = ctx.attr.compiler_toolbox,
-            pngquant = ctx.attr.pngquant,
             companion = ctx.attr.compiler_companion,
             minify_config = ctx.attr.minify_config,
             sqldelight_compiler = ctx.attr.sqldelight_compiler,
@@ -34,7 +32,7 @@ valdi_toolchain = rule(
             executable = True,
             cfg = "exec",
             allow_single_file = True,
-            doc = "The Valdi compiler to use. Must be a single-file executable (native_binary). For local development, see //compiler/compiler:local_valdi_compiler.",
+            doc = "The Valdi compiler to use. Must be a single-file executable. For local development, see //compiler/compiler:local_valdi_compiler.",
         ),
         "compiler_toolbox": attr.label(
             executable = True,
@@ -49,12 +47,6 @@ valdi_toolchain = rule(
         ),
         "minify_config": attr.label(
             default = "//modules:minify_config",
-        ),
-        "pngquant": attr.label(
-            executable = True,
-            cfg = "exec",
-            allow_single_file = True,
-            doc = "The pngquant executable to use.",
         ),
         "sqldelight_compiler": attr.label(
             cfg = "exec",

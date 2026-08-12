@@ -43,6 +43,7 @@
 #include "utils/time/StopWatch.hpp"
 
 #include "valdi_core/cpp/Utils/Function.hpp"
+#include <atomic>
 #include <future>
 #include <tuple>
 #include <utility>
@@ -183,8 +184,45 @@ public:
 
     void postInit();
 
-    void setListener(IJavaScriptRuntimeListener* listener);
-    IJavaScriptRuntimeListener* getListener() const;
+    /**
+     A listener reference that retains the listener's owner while held, so a caller can safely
+     invoke the listener even if the owning runtime is concurrently being torn down on another
+     thread (e.g. a worker's JS thread using the parent runtime's listener).
+     */
+    class RetainedListener {
+    public:
+        RetainedListener() = default;
+        RetainedListener(IJavaScriptRuntimeListener* listener, Shared<SharedPtrRefCountable> owner)
+            : _listener(listener), _owner(std::move(owner)) {}
+
+        explicit operator bool() const {
+            return _listener != nullptr;
+        }
+        IJavaScriptRuntimeListener* operator->() const {
+            return _listener;
+        }
+
+    private:
+        IJavaScriptRuntimeListener* _listener = nullptr;
+        Shared<SharedPtrRefCountable> _owner;
+    };
+
+    /**
+     `listenerOwner` must own (or be) the object implementing `listener`; getListener() resolves
+     the listener only while the owner is still alive and retains it for the handle's lifetime.
+     */
+    void setListener(IJavaScriptRuntimeListener* listener, const Weak<SharedPtrRefCountable>& listenerOwner);
+    RetainedListener getListener() const;
+    void setANRDiagnosticsEnabled(bool enabled);
+
+    // True when ANR diagnostics are on and the caller is on this runtime's JS thread. Guards the
+    // native-call activity writes so worker threads never touch the JS thread's slot.
+    bool anrDiagnosticsActiveOnJsThread();
+
+    // Swaps the recorded in-flight JS->native call name and returns the previous one, so nested
+    // calls report the innermost and unwind to the parent. Written on the JS thread around bridge
+    // calls, read by the ANR detector.
+    StringBox swapCurrentNativeCallName(StringBox name);
 
     void fullTeardown();
     void partialTeardown();
@@ -236,9 +274,12 @@ public:
     void dispatchSynchronouslyOnJsThread(JavaScriptThreadTask&& function);
     bool isInJsThread() final;
     Ref<Context> getLastDispatchedContext() const final;
+    std::string getANRAttributionInfo() const final;
+    bool isReadyForANRDetection() const final;
 
     void performGc();
     JavaScriptContextMemoryStatistics dumpMemoryStatistics();
+    void dumpMemoryStatisticsAsync(Function<void(JavaScriptContextMemoryStatistics)> completion);
 
     Result<Value> evaluateScript(const BytesView& script, const StringBox& sourceFilename);
 
@@ -334,7 +375,13 @@ private:
     MainThreadManager& _mainThreadManager;
     AttributeIds& _attributeIds;
     [[maybe_unused]] Ref<ILogger> _logger;
+    // Guarded by _listenerMutex: written from the owning runtime's thread (setListener, teardown)
+    // but also from a parent runtime detaching its workers during teardown, while the worker's JS
+    // thread reads it. The weak owner lets getListener() retain the listener's implementor across
+    // a call, closing the race against the owner's destruction.
+    mutable Mutex _listenerMutex;
     IJavaScriptRuntimeListener* _listener;
+    Weak<SharedPtrRefCountable> _listenerOwner;
 
     FlatMap<ResourceId, Shared<JavaScriptModuleContainer>> _modules;
     Ref<JavaScriptComponentContextHandler> _contextHandler;
@@ -361,12 +408,22 @@ private:
     Ref<DispatchQueue> _dispatchQueue;
     std::atomic<bool> _isDisposed;
     std::atomic<ContextId> _lastDispatchedContextId;
+    // ANR attribution diagnostics, gated by the VALDI_ENABLE_MODULE_LOAD_DIAGNOSTICS COF key (key
+    // name kept from the earlier module-load diagnostics for config continuity). The mutex guards
+    // the in-flight native call name: written on the JS thread around JS->native bridge calls,
+    // read by the ANR detector without running JS.
+    bool _anrDiagnosticsEnabled = false;
+    mutable Mutex _nativeCallActivityMutex;
+    StringBox _currentNativeCallName;
     // A lock that will block the JS thread until postInit() is called and the initialization has completed
     AsyncGroup _initLock;
     bool _hasGcScheduled = false;
     bool _symbolicating = false;
     bool _running = false;
     bool _enableDebugger;
+    // Set once doInitialize() finished evaluating the core bundles; read by the ANR detector to
+    // exclude the bootstrap window from ANR accounting.
+    std::atomic<bool> _bootstrapCompleted = false;
     // Used for unit testing only
     std::atomic<bool> _forceStackTraceCapture = false;
     int _daemonClientListenerIdSequence = 0;
@@ -382,6 +439,7 @@ private:
     std::vector<RegisteredTypeConverter> _typeConverters;
     std::vector<Ref<JavaScriptStacktraceCaptureSession>> _stacktraceCaptureSessions;
     std::vector<Weak<JavaScriptRuntime>> _jsWorkers;
+    Mutex _jsWorkersMutex;
 
     Shared<JSValueRefHolder> _uncaughtExceptionHandler;
     Shared<JSValueRefHolder> _unhandledRejectionHandler;
@@ -493,6 +551,8 @@ private:
 
     JSValueRef runtimeDumpMemoryStatistics(JSFunctionNativeCallContext& callContext);
     JSValueRef runtimePerformGC(JSFunctionNativeCallContext& callContext);
+    JSValueRef runtimeNewWeakRef(JSFunctionNativeCallContext& callContext);
+    JSValueRef runtimeDerefWeakRef(JSFunctionNativeCallContext& callContext);
     JSValueRef runtimeHeapDump(JSFunctionNativeCallContext& callContext);
 
     JSValueRef runtimeSetUncaughtExceptionHandler(JSFunctionNativeCallContext& callContext);

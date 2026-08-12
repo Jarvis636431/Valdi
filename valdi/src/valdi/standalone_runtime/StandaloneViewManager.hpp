@@ -9,13 +9,16 @@
 
 #include "valdi/runtime/Interfaces/IViewManager.hpp"
 #include "valdi_core/cpp/Utils/FlatMap.hpp"
+#include "valdi_core/cpp/Utils/FlatSet.hpp"
 #include "valdi_core/cpp/Utils/Shared.hpp"
+
+#include <vector>
 
 namespace Valdi {
 
 class StandaloneViewManager : public IViewManager {
 public:
-    StandaloneViewManager();
+    explicit StandaloneViewManager(PlatformType platformType = PlatformTypeIOS);
 
     Valdi::Ref<Valdi::ViewFactory> createViewFactory(
         const Valdi::StringBox& className, const Valdi::Ref<Valdi::BoundAttributes>& boundAttributes) override;
@@ -44,6 +47,7 @@ public:
     void setRegisterCustomAttributes(bool registerCustomAttributes);
     void setKeepAttributesHistory(bool keepAttributesHistory);
     void setAlwaysRenderInMainThread(bool alwaysRenderInMainThread);
+    void setManagesChildFramesForClass(const StringBox& className, bool managesChildFrames);
 
     void setAllowViewPooling(bool setAllowViewPooling);
     Valdi::Value createViewNodeWrapper(const Valdi::Ref<Valdi::ViewNode>& viewNode,
@@ -55,10 +59,12 @@ public:
     Ref<IBitmapFactory> getViewRasterBitmapFactory() const override;
 
 private:
+    PlatformType _platformType;
     bool _registerCustomAttributes = false;
     bool _keepAttributesHistory = false;
     bool _allowViewPooling = false;
     bool _alwaysRenderInMainThread = false;
+    FlatSet<StringBox> _managedChildFrameClasses;
 };
 
 } // namespace Valdi

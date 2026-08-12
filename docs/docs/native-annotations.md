@@ -6,8 +6,15 @@ The Valdi compiler integrates tightly with the TypeScript compiler. It supports 
 
 The annotations are declared in comments, because TypeScript does not support compile time annotations.
 
-> [!Warning]
-> When composing multiple classes with `@Export*`, e.g. having an `@ExportModel` `Component` which exposes a `@ExportModel` on a `Context`, ensure that they are all in the same file. This restriction does not apply for pure TS/JS usages, only for when where generated native code need to depend on other generated native code.
+> [!Note]
+> `@Component`, `@ViewModel`, and `@Context` no longer need to live in the same file. When the Component's base class is `Component<VM, Ctx>` or `StatefulComponent<VM, State, Ctx>` and the VM/Ctx are declared in the same file, the compiler infers the binding from the `extends` type arguments — this is the default backward-compatible path. When they live in different files, add explicit params:
+>
+> ```ts
+> /** @Component({viewModel: 'MyVM', context: 'MyCtx'}) @ExportModel(...) */
+> class MyComp extends Component<MyVM, MyCtx> { ... }
+> ```
+>
+> Cross-module (VM/Ctx in a different Bazel module than the Component) is still a v1 limitation — parents/bindings across module boundaries need the cross-module symbol persistence follow-up.
 
 
 ## Example
@@ -69,6 +76,22 @@ UIView *view = [[SCMyComponentView alloc]
 
 > [!Note]
 > The TypeScript component associated to the root view will be destroyed once the Objective-C root view instance is deallocated. Please make sure that there are no retain cycles between the dependencies passed to the root view through the view model and component context otherwise the root view might leak and the TypeScript component won't be destroyed.
+
+> [!Warning]
+> **On iOS this auto-destroy is coupled to the root view's deallocation, and it fails silently if that deallocation is delayed.** It works when the root view is your view controller's `view` and the view controller is released promptly on dismissal. It does **not** work if anything keeps the root view (or its host view controller) alive past dismissal, for example:
+> - the root view is `addSubview:`'d onto a view controller whose deallocation can be delayed (held by a container, an asynchronous teardown flow, or an external/programmatic dismissal),
+> - you keep the context or the root view in a cache, a service, or a longer-lived scope,
+> - a dependency passed through the view model or component context captures the root view or its host (a retain cycle through your own code).
+>
+> In any of those cases the root view never deallocates, auto-destroy never fires, and the context plus its entire view-node tree stay alive in the `Runtime` with no error reported. **When the object holding your root view can outlive the screen, call `destroy()` explicitly at your teardown point instead of relying on deallocation:**
+>
+> ```objectivec
+> // On teardown, when the host's lifetime is not guaranteed to end at dismissal:
+> [self.contentView.valdiContext destroy];   // free the context regardless of the view's lifetime
+> [self.contentView removeFromSuperview];     // and decouple, so a lingering host cannot re-pin it
+> ```
+>
+> Rule of thumb: if the root view has exactly one owner whose deallocation is tied to the screen disappearing, auto-destroy is safe. If a second owner or a delayed-deallocation host is involved, call `destroy()`.
 
 ### Usage in Kotlin
 
@@ -160,8 +183,14 @@ These annotations mark component-related interfaces and classes.
  * Notifies that the class is the exported component class for the TSX file.
  * must be used: alongside @ExportModel
  * must be used: on a class extending Component<>
+ * optional params: viewModel: '<TsTypeName>', context: '<TsTypeName>'
+ *   Provide when the VM/Ctx live in a different file than the Component. The
+ *   named types must be imported into the Component's file. For same-file
+ *   Components using `Component<VM, Ctx>` or `StatefulComponent<VM, State,
+ *   Ctx>` as their base, the compiler auto-resolves VM/Ctx from the type
+ *   arguments and these params can be omitted.
  */
-@Component();
+@Component({ viewModel?: string, context?: string });
 
 /**
  * Can be set on a TypeScript interface
@@ -170,7 +199,8 @@ These annotations mark component-related interfaces and classes.
  * the viewModel parameter will be typed with this interface.
  * must be used: alongside @ExportModel
  * must be used: on an interface
- * must be used: in the same file as the matching @Component
+ * may live in a different file than the matching @Component when the Component
+ * uses the `viewModel: '<Name>'` annotation param to bind it explicitly.
  */
 @ViewModel();
 
@@ -181,7 +211,8 @@ These annotations mark component-related interfaces and classes.
  * the context parameter will be typed with this interface.
  * must be used: alongside @ExportModel
  * must be used: on an interface
- * must be used: in the same file as the matching @Component
+ * may live in a different file than the matching @Component when the Component
+ * uses the `context: '<Name>'` annotation param to bind it explicitly.
  */
 @Context();
 ```

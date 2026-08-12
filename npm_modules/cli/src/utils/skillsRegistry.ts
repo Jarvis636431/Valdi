@@ -63,3 +63,12 @@ export async function fetchSkillContent(skillPath: string): Promise<string> {
     `Skill content not found for "${skillPath}". Re-install @snap/valdi to get the latest bundle.`,
   );
 }
+
+// Return the bundled directory for a skill (e.g. bundled-skills/skills/valdi-mock-to-module/).
+// Used by adapters that need to install resource files (scripts/) alongside the skill.
+export function getSkillResourceDir(skillPath: string): string | null {
+  const bundledDir = findBundledSkillsDir();
+  if (bundledDir == null) return null;
+  const dir = path.join(bundledDir, path.dirname(skillPath));
+  return fs.existsSync(dir) ? dir : null;
+}

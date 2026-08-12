@@ -30,6 +30,28 @@ ruleTester.run('jsx-no-lambda', rule, {
     {
       code: `const config = { theme: 'dark' }; const x = <MyComp config={config} />;`,
     },
+    // Pre-computed .map() result stored in a variable is fine
+    {
+      code: `const mapped = items.map(fn); const x = <MyComp items={mapped} />;`,
+    },
+    // Non-array method calls are fine
+    {
+      code: `<MyComp items={this.getItems()} />`,
+    },
+    {
+      code: `<MyComp items={createReusableCallback(() => doThing())} />`,
+    },
+    // Computed property access (bracket notation) should not be flagged
+    {
+      code: `<MyComp items={obj[map]()} />`,
+    },
+    // .sort() and .reverse() mutate in place and return the same reference
+    {
+      code: `<MyComp items={items.sort(compareFn)} />`,
+    },
+    {
+      code: `<MyComp items={items.reverse()} />`,
+    },
   ],
   invalid: [
     // Inline arrow function
@@ -61,6 +83,36 @@ ruleTester.run('jsx-no-lambda', rule, {
     {
       code: `<MyComp options={{}} />`,
       errors: [{ messageId: 'incorrectObject', data: { attributeName: 'options' } }],
+    },
+    // .map() directly in JSX attribute
+    {
+      code: `<MyComp items={this.viewModel.entities.map(mapFn)} />`,
+      errors: [{ messageId: 'incorrectArrayMethod', data: { attributeName: 'items', methodName: 'map' } }],
+    },
+    // .filter() directly in JSX attribute
+    {
+      code: `<MyComp items={items.filter(x => x.active)} />`,
+      errors: [{ messageId: 'incorrectArrayMethod', data: { attributeName: 'items', methodName: 'filter' } }],
+    },
+    // .slice() directly in JSX attribute
+    {
+      code: `<MyComp items={items.slice(0, 5)} />`,
+      errors: [{ messageId: 'incorrectArrayMethod', data: { attributeName: 'items', methodName: 'slice' } }],
+    },
+    // .flatMap() directly in JSX attribute
+    {
+      code: `<MyComp items={sections.flatMap(s => s.entities)} />`,
+      errors: [{ messageId: 'incorrectArrayMethod', data: { attributeName: 'items', methodName: 'flatMap' } }],
+    },
+    // .concat() directly in JSX attribute
+    {
+      code: `<MyComp items={listA.concat(listB)} />`,
+      errors: [{ messageId: 'incorrectArrayMethod', data: { attributeName: 'items', methodName: 'concat' } }],
+    },
+    // .flat() directly in JSX attribute
+    {
+      code: `<MyComp items={items.flat()} />`,
+      errors: [{ messageId: 'incorrectArrayMethod', data: { attributeName: 'items', methodName: 'flat' } }],
     },
   ],
 });

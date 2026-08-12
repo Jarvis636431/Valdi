@@ -106,9 +106,17 @@ document.addEventListener('click', ...);  // Doesn't work!
   onChange={this.handleTextChange}
   onEditEnd={this.handleSubmit}
 />
+
+// ✅ CORRECT - For keyboard input on macOS desktop, use a polyglot <custom-view>
+// (see valdi-polyglot-module and valdi-custom-view skills for full pattern)
+{Device.isDesktop() && (
+  <custom-view macosClass='SCKeyboardView' onKeyDown={this.handleKeyDown} width={200} height={200}>
+    {/* wrap visible content so the view has non-zero size for first responder */}
+  </custom-view>
+)}
 ```
 
-**Important**: Valdi doesn't support `addEventListener`, `keydown`, or other global DOM events. Use element-specific callbacks like `onTap`, `onPress`, `onChange`, etc.
+**Important**: Valdi doesn't support `addEventListener`, `keydown`, or other global DOM events. Use element-specific callbacks like `onTap`, `onPress`, `onChange`, etc. For keyboard input on macOS desktop, use a polyglot `<custom-view>` with a native NSView that captures `keyDown:` events and forwards them via a bound callback attribute.
 
 ## Timers and Scheduling
 
@@ -178,6 +186,26 @@ onRender() {
 }
 ```
 
+### Font weights
+
+Only two system font weights are available:
+- `'system 16'` — regular weight
+- `'system-bold 16'` — bold weight
+
+**No other weights exist.** `system-semibold`, `system-light`, `system-medium` etc. will cause build errors. If you need semibold, use `system-bold` instead.
+
+### ScrollView restrictions
+
+`<scroll>` (ScrollView) does **not** support `flexDirection`. It always scrolls vertically. Do not set `flexDirection: 'column'` on a ScrollView style — it will cause a build error.
+
+```typescript
+// ❌ WRONG - flexDirection not valid on ScrollView
+new Style<ScrollView>({ flexDirection: 'column' })
+
+// ✅ CORRECT - ScrollView scrolls vertically by default, no flexDirection needed
+new Style<ScrollView>({ width: '100%', height: '100%' })
+```
+
 ### Style Composition
 
 ```typescript
@@ -230,6 +258,11 @@ new Style<View>({
   paddingVertical: 10,      // ❌ Use padding: '10 0'
   paddingInline: 15,        // ❌ Doesn't exist
 })
+
+// ❌ WRONG - gap property doesn't exist on View
+new Style<View>({ flexDirection: 'row', gap: '8' })
+// ✅ CORRECT - use margin on child elements instead
+// In JSX: <view marginRight={8}> or margin="0 8 0 0"
 ```
 
 ### Layout: Flexbox (Yoga)
@@ -328,6 +361,28 @@ const layoutStyle = new Style<Layout>({ padding: 10 });
 > 
 > **📖 Best practices**: See `/docs/docs/core-styling.md` for styling patterns and examples
 
+## @ExportModel ViewModel Restrictions
+
+Interfaces annotated with `@ViewModel @ExportModel` are exported to native code. The Valdi compiler can only export **primitive types** (`string`, `number`, `boolean`) and other `@ExportModel`-annotated interfaces. Custom type aliases (e.g. `type Direction = 'UP' | 'DOWN'`) are **not supported** in exported ViewModels.
+
+```typescript
+// ❌ WRONG — type alias in @ExportModel ViewModel
+type Direction = 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
+
+/** @ViewModel @ExportModel */
+interface GameViewModel {
+  initialDirection?: Direction;  // ❌ Compiler error: "Unrecognized type"
+}
+
+// ✅ CORRECT — keep custom types in State (internal), not ViewModel (exported)
+/** @ViewModel @ExportModel */
+interface GameViewModel {}  // Only export what native code needs
+
+interface GameState {
+  direction: Direction;  // ✅ Fine — State is not exported
+}
+```
+
 ## Common Mistakes to Avoid
 
 1. **Returning JSX from onRender()** - It returns void, JSX is a statement
@@ -337,10 +392,17 @@ const layoutStyle = new Style<Layout>({ padding: 10 });
 5. **Suggesting scheduleRender()** - Deprecated, use StatefulComponent + setState()
 6. **Using addEventListener** - Use element callbacks like onTap, onPress, onChange
 7. **Using setInterval/setTimeout directly** - Use this.setTimeoutDisposable()
-8. **Using CSS properties that don't exist** - No gap, paddingHorizontal, paddingVertical
+8. **Using CSS properties that don't exist** - No gap, paddingHorizontal, paddingVertical; use margin on children for gap
 9. **Using `flex: 1`** - `flex` doesn't exist on `View`; use `flexGrow: 1` instead
 10. **Using `fontSize` on Label** - Labels use `font: 'system 20'` (string), not `fontSize`
-11. **Using `overflow: 'hidden'`** - `View` only accepts `'visible' | 'scroll'`; remove overflow or use 'scroll'
+11. **Typing SIGIcon values as `string`** - `SIGIcon.cameraStroke` etc. return `Asset`, not `string`; use `import { Asset } from 'valdi_core/src/Asset'` for ViewModel fields that store icon references
+12. **Using `overflow: 'hidden'`** - `View` only accepts `'visible' | 'scroll'`; remove overflow or use 'scroll'
+13. **Using type aliases in `@ExportModel` ViewModels** - Only primitives and other `@ExportModel` types are allowed
+14. **Importing `Shape` instead of `ShapeView`** - `Shape` is not exported; use `import { ShapeView } from 'valdi_tsx/src/NativeTemplateElements'` and `new Style<ShapeView>({...})`
+15. **Using per-side border properties** - No `borderRight`, `borderRightWidth`, etc. Only `borderWidth`, `borderColor`, `borderRadius` exist. Use a thin `<view>` as a divider instead.
+16. **Using `font: 'system-semibold 16'`** - Only `system` (regular) and `system-bold` are reliably available. Use `system-bold` for semibold.
+17. **ViewModel/Context name collisions** - When a module has multiple components, each exported `ViewModel` and `ComponentContext` must have a unique name (e.g. `WeatherCardViewModel` not just `ViewModel`), or the compiler will emit conflicting platform types.
+18. **Using `flexDirection` on ScrollView** - ScrollView doesn't support flexDirection; it scrolls vertically by default
 
 ## Platform Detection
 
@@ -354,14 +416,16 @@ class MyComponent extends Component<MyViewModel> {
     <view>
       {Device.isIOS() && <IOSOnlyView />}
       {Device.isAndroid() && <AndroidOnlyView />}
-      {Device.isMacOS() && <MacOSOnlyView />}
+      {Device.isDesktop() && <DesktopOnlyView />}
       {Device.isWeb() && <WebOnlyView />}
     </view>;
   }
 }
 ```
 
-Also use `Device.isIOS()` / `Device.isAndroid()` guards before using `<custom-view>` elements that don't have implementations on all platforms.
+**Available guards:** `Device.isIOS()`, `Device.isAndroid()`, `Device.isDesktop()`, `Device.isWeb()`
+
+Use platform guards before using `<custom-view>` elements that don't have implementations on all platforms. `Device.isDesktop()` is true for macOS desktop apps (the preview/standalone app). There is no `Device.isMacOS()` — use `Device.isDesktop()` instead.
 
 ## Imports
 

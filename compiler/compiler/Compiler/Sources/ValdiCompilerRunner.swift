@@ -125,6 +125,9 @@ class ValdiCompilerRunner {
             } else if self.arguments.genStaticRes {
                 try StaticResGenerator.generate(baseUrl: baseUrl, inputFiles: self.arguments.input, to: self.arguments.out!)
                 return true
+            } else if self.arguments.imageProcessingOnly {
+                let configs = try ResolvedConfigs.from(logger: logger, baseURL: baseUrl, userConfigURL: URL.valdiUserConfigURL, args: self.arguments)
+                return try runImageProcessingOnly(configs: configs, fileManager: fileManager, baseUrl: baseUrl)
             } else if self.arguments.out != nil {
                 throw CompilerError("Specifying --out only makes sense if you're using one of the utility commands: --build OR --build-module OR --unpack-module OR --upload-module")
             }
@@ -255,6 +258,15 @@ class ValdiCompilerRunner {
                 }
                 logger.info("Hot reloading disabled - starting compilation")
                 try compiler.compile()
+
+                // --fail-on-errors: surface per-item TS / asset failures as a
+                // non-zero process exit. compile() doesn't throw on those — it
+                // logs them and tracks the count in lastCompileFailedItemCount.
+                // Gated behind the flag so existing --compile callers that today
+                // tolerate per-item errors keep working unchanged.
+                if self.arguments.failOnErrors && compiler.lastCompileFailedItemCount > 0 {
+                    return false
+                }
             }
 
             if arguments.bazel && logger.emittedLogsCount > 0 {
@@ -358,12 +370,16 @@ class ValdiCompilerRunner {
                                                                        projectConfig: configs.projectConfig,
                                                                        compilerConfig: configs.compilerConfig,
                                                                        nativeCodeGenerationManager: nativeCodeGenerationManager))
-            builder.append(preprocessor: GenerateGlobalMetadataProcessor(logger: logger,
-                                                                         projectConfig: configs.projectConfig,
-                                                                         rootBundle: rootBundle,
-                                                                         shouldMergeWithExistingFile: false))
         } else {
-            builder.append(preprocessor: try IdentifyImageAssetsProcessor(logger: logger,  imageToolbox: imageToolbox, compilerConfig: configs.compilerConfig, diskCacheProvider: diskCacheProvider))
+            if let explicitImageAssetManifest = configs.compilerConfig.explicitImageAssetManifest {
+                builder.append(preprocessor: try ExplicitImageAssetsProcessor(logger: logger,
+                                                                              imageToolbox: imageToolbox,
+                                                                              compilerConfig: configs.compilerConfig,
+                                                                              manifest: explicitImageAssetManifest,
+                                                                              diskCacheProvider: diskCacheProvider))
+            } else {
+                builder.append(preprocessor: try IdentifyImageAssetsProcessor(logger: logger,  imageToolbox: imageToolbox, compilerConfig: configs.compilerConfig, diskCacheProvider: diskCacheProvider))
+            }
             builder.append(preprocessor: IdentifyFontAssetsProcessor())
             builder.append(preprocessor: GenerateAssetCatalogProcessor(logger: logger, fileManager: fileManager, projectConfig: configs.projectConfig, enablePreviewInGeneratedTSFile: enablePreviewInGeneratedTSFile))
             builder.append(preprocessor: TranslationStringsProcessor(logger: logger, fileManager: fileManager, compilerConfig: configs.compilerConfig, projectConfig: configs.projectConfig, emitInlineTranslations: emitInlineTranslations, companion: compilerCompanion))
@@ -387,11 +403,6 @@ class ValdiCompilerRunner {
             if !configs.compilerConfig.generateTSResFiles {
                 if configs.projectConfig.iosBuildFileConfig != nil || configs.projectConfig.androidBuildFileConfig != nil
                     || configs.projectConfig.webBuildFileConfig != nil{
-                    let shouldMergeWithExistingFile = modulesFilter != nil
-                    builder.append(preprocessor: GenerateGlobalMetadataProcessor(logger: logger,
-                                                                                 projectConfig: configs.projectConfig,
-                                                                                 rootBundle: rootBundle,
-                                                                                 shouldMergeWithExistingFile: shouldMergeWithExistingFile))
                     builder.append(preprocessor: GenerateBuildFileProcessor(projectConfig: configs.projectConfig))
                 }
                 
@@ -539,6 +550,30 @@ class ValdiCompilerRunner {
         teardownCallbacks.forEach(pipeline.onTeardown)
 
         return pipeline
+    }
+
+    private func runImageProcessingOnly(configs: ResolvedConfigs, fileManager: ValdiFileManager, baseUrl: URL) throws -> Bool {
+        guard let manifest = configs.compilerConfig.explicitImageAssetManifest else {
+            throw CompilerError("--image-processing-only requires --explicit-image-asset-manifest")
+        }
+
+        let toolboxExecutable = ToolboxExecutable(logger: logger, compilerToolboxURL: configs.projectConfig.compilerToolboxURL)
+        let imageToolbox = ImageToolbox(toolboxExecutable: toolboxExecutable)
+        let imageConverter = ImageConverter(logger: logger, fileManager: fileManager, projectConfig: configs.projectConfig, imageToolbox: imageToolbox)
+
+        let generator = ExplicitImageAssetGenerator(logger: logger,
+                                                    fileManager: fileManager,
+                                                    imageToolbox: imageToolbox,
+                                                    imageConverter: imageConverter)
+        let updatedManifest = try generator.process(manifest: manifest, baseURL: baseUrl)
+
+        if let outputPath = arguments.imageAssetManifestOutput {
+            let data = try updatedManifest.toJSON(outputFormatting: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes],
+                                                  keyEncodingStrategy: .convertToSnakeCase)
+            try data.write(to: URL(fileURLWithPath: outputPath))
+        }
+
+        return true
     }
 
     private func getCompanionExecutable(configs: ResolvedConfigs, diskCacheProvider: DiskCacheProvider) throws -> CompanionExecutable {

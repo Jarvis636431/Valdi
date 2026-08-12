@@ -24,6 +24,7 @@
 
 #import "valdi/ios/Text/SCValdiAttributedTextHelper.h"
 #import "valdi/ios/Text/SCValdiFont.h"
+#import "valdi/ios/Text/SCValdiProcessedText.h"
 
 @implementation SCValdiTextField {
     /// YES if pressing the return key should dismiss the keyboard, o/w NO
@@ -48,6 +49,8 @@
     id<SCValdiFunction> _Nullable _onSelectionChange;
 
     SCValdiTextInputUnfocusReason _lastUnfocusReason;
+
+    CGFloat _minimumScaleFactor;
 }
 
 #pragma mark - UIView methods
@@ -81,6 +84,12 @@
 {
     [self _updateAttributedTextIfNeeded];
     [super layoutSubviews];
+}
+
+- (CGSize)sizeThatFits:(CGSize)size
+{
+    [self _updateAttributedTextIfNeeded];
+    return [super sizeThatFits:size];
 }
 
 - (CGPoint)convertPoint:(CGPoint)point fromView:(UIView *)view
@@ -326,12 +335,18 @@ static void SCValdiCallEventWithReason(id<SCValdiFunction> function, UITextField
 
         SCValdiFontAttributes *fontAttributes = [self fontAttributes];
 
+        UIFont *resolvedFont = [fontAttributes.font resolveFontFromTraitCollection:traitCollection];
+        self.minimumFontSize = _minimumScaleFactor * resolvedFont.pointSize;
+
         if ([self _needAttributedString]) {
-            NSAttributedString *attributedString = [NSAttributedString attributedStringWithValdiText:_textValue
-                                                                                             attributes:[fontAttributes resolveAttributesWithIsRightToLeft:isRightToLeft traitCollection:traitCollection]
-                                                                                          isRightToLeft:isRightToLeft
-                                                                                            fontManager:_fontManager
-                                                                                        traitCollection:traitCollection];
+            SCValdiProcessedText *processedText =
+                [SCValdiProcessedText processedTextWithAttributeValue:_textValue
+                                                           attributes:[fontAttributes resolveAttributesWithIsRightToLeft:isRightToLeft traitCollection:traitCollection]
+                                                        isRightToLeft:isRightToLeft
+                                                          fontManager:_fontManager
+                                                      traitCollection:traitCollection
+                                                        configuration:nil];
+            NSAttributedString *attributedString = processedText.attributedString;
 
             [self updateLabelMode:SCValdiTextModeAttributedText];
 
@@ -347,7 +362,7 @@ static void SCValdiCallEventWithReason(id<SCValdiFunction> function, UITextField
 
             [self updateLabelMode:SCValdiTextModeText];;
 
-            UIFont *font = [fontAttributes.font resolveFontFromTraitCollection:traitCollection];
+            UIFont *font = resolvedFont;
             if (self.font != font) {
                 self.font = font;
             }
@@ -361,9 +376,7 @@ static void SCValdiCallEventWithReason(id<SCValdiFunction> function, UITextField
             // NSTextAlignmentNatural switches alignment based on keyboard language instead of app language,
             // introduce fix under COF to use NSTextAlignmentLeft and NSTextAlignmentRight
             // instead of Natural (the NSTextAlignment used for left)
-            if (resolvedTextAlignment != NSTextAlignmentCenter &&
-                resolvedTextAlignment != NSTextAlignmentJustified) {
-
+            if (resolvedTextAlignment == NSTextAlignmentNatural) {
                 if (traitCollection.layoutDirection == UITraitEnvironmentLayoutDirectionRightToLeft) {
                     resolvedTextAlignment = NSTextAlignmentRight;
                 }
@@ -464,12 +477,13 @@ static void SCValdiCallEventWithReason(id<SCValdiFunction> function, UITextField
 
 - (BOOL)valdi_setFocused:(BOOL)focused
 {
-    if (focused) {
-        [self becomeFirstResponder];
-    } else {
-        [self resignFirstResponder];
+    // Re-entering UIKit's first responder machinery for a transition that already happened can
+    // stall the main thread: it enqueues more work on UIKeyboardTaskQueue while the main thread may
+    // already be blocked draining that same queue.
+    if (focused == self.isFirstResponder) {
+        return YES;
     }
-    return YES;
+    return focused ? [self becomeFirstResponder] : [self resignFirstResponder];
 }
 
 - (BOOL)valdi_setTintColor:(UIColor *)color
@@ -827,6 +841,38 @@ static void SCValdiCallEventWithReason(id<SCValdiFunction> function, UITextField
         resetBlock:^(SCValdiTextField *textField, id<SCValdiAnimatorProtocol> animator) {
             [textField valdi_setEnableInlinePredictions:NO];
         }];
+
+    [attributesBinder bindAttribute:@"textDirection"
+        invalidateLayoutOnChange:NO
+        withStringBlock:^BOOL(SCValdiTextField *textField, NSString *attributeValue, id<SCValdiAnimatorProtocol> animator) {
+            return SCValdiTextInputSetTextDirection(textField, attributeValue);
+        }
+        resetBlock:^(SCValdiTextField *textField, id<SCValdiAnimatorProtocol> animator) {
+            SCValdiTextInputSetTextDirection(textField, nil);
+        }];
+
+    [attributesBinder bindAttribute:@"adjustsFontSizeToFitWidth"
+        invalidateLayoutOnChange:YES
+        withBoolBlock:^BOOL(SCValdiTextField *textField, BOOL attributeValue, id<SCValdiAnimatorProtocol> animator) {
+            textField.adjustsFontSizeToFitWidth = attributeValue;
+            return YES;
+        }
+        resetBlock:^(SCValdiTextField *textField, id<SCValdiAnimatorProtocol> animator) {
+            textField.adjustsFontSizeToFitWidth = NO;
+        }];
+
+    [attributesBinder bindAttribute:@"minimumScaleFactor"
+        invalidateLayoutOnChange:YES
+        withDoubleBlock:^BOOL(SCValdiTextField *textField, CGFloat attributeValue, id<SCValdiAnimatorProtocol> animator) {
+            textField->_minimumScaleFactor = attributeValue;
+            UIFont *font = [[textField fontAttributes].font resolveFontFromTraitCollection:textField.valdiContext.traitCollection];
+            textField.minimumFontSize = attributeValue * font.pointSize;
+            return YES;
+        }
+        resetBlock:^(SCValdiTextField *textField, id<SCValdiAnimatorProtocol> animator) {
+            textField->_minimumScaleFactor = 0;
+            textField.minimumFontSize = 0;
+        }];
 }
 
 #pragma mark - Private property methods
@@ -890,8 +936,23 @@ static void SCValdiCallEventWithReason(id<SCValdiFunction> function, UITextField
     if (_selectTextOnFocus) {
         // Without dispatch_async, `selectAll` only works every other call.
         // There are other parts in the app where we do this as well.
+        __weak __typeof(self) weakSelf = self;
         dispatch_async(dispatch_get_main_queue(), ^{
-            [textField selectAll:nil];
+            __typeof(self) strongSelf = weakSelf;
+            // The block runs a runloop turn later, so the premise that we just took focus may no
+            // longer hold. selectAll: goes through beginSelectionChange, which blocks the main
+            // thread on UIKeyboardTaskQueue, so skip it whenever it cannot change the selection.
+            if (strongSelf == nil || !strongSelf.isFirstResponder || strongSelf.text.length == 0) {
+                return;
+            }
+            UITextRange *selection = strongSelf.selectedTextRange;
+            BOOL alreadyFullySelected = selection != nil &&
+                [strongSelf comparePosition:selection.start toPosition:strongSelf.beginningOfDocument] == NSOrderedSame &&
+                [strongSelf comparePosition:selection.end toPosition:strongSelf.endOfDocument] == NSOrderedSame;
+            if (alreadyFullySelected) {
+                return;
+            }
+            [strongSelf selectAll:nil];
         });
     }
 }

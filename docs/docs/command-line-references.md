@@ -79,7 +79,7 @@ Run this command to enable VS Code syntax highlighting for the current workspace
 - If `--target` is specified, synchronizes only the specified Bazel target.<br></br>
 
 `valdi new_module [module-name]`\
-Create a new Valdi module with boilerplate structure including BUILD.bazel, module.yaml, and basic source files.
+Create a new Valdi module with boilerplate structure including `BUILD.bazel` and basic source files.
 
 Options:
 - `module-name` (positional): Name of the Valdi module
@@ -195,7 +195,7 @@ Options:
 - `--verbose, -v`: Show detailed diagnostic information
 - `--fix, -f`: Attempt to automatically fix issues where possible
 - `--json, -j`: Output results in JSON format (useful for CI/CD)
-- `--framework, -F`: Include framework development checks (git-lfs, temurin, etc.)
+- `--framework, -F`: Include framework development checks (temurin, etc.)
 - `--project, -p`: Include project-specific checks (workspace structure, etc.)
 
 Example:

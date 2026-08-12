@@ -96,6 +96,69 @@ function getDrawnSize(ctx: any): { w: number; h: number } {
   return { w: args[3], h: args[4] };
 }
 
+describe('WebValdiImage – src resolution', () => {
+  afterEach(() => uninstallDomStubs());
+
+  it('resolves a plain string URL', () => {
+    const { img } = makeImage();
+    img.changeAttribute('src', 'https://example.com/photo.png');
+    expect(img.img.src).toBe('https://example.com/photo.png');
+  });
+
+  it('resolves an object with src field (getAssets catalog shape)', () => {
+    const { img } = makeImage();
+    img.changeAttribute('src', { path: 'logo', src: 'data:image/png;base64,abc' });
+    expect(img.img.src).toBe('data:image/png;base64,abc');
+  });
+
+  it('resolves a nested src object', () => {
+    const { img } = makeImage();
+    img.changeAttribute('src', { src: { src: 'https://example.com/nested.png' } });
+    expect(img.img.src).toBe('https://example.com/nested.png');
+  });
+
+  it('resolves a makeAssetFromUrl-shaped object (path + src + width + height)', () => {
+    const { img } = makeImage();
+    img.changeAttribute('src', { path: 'https://example.com/photo.png', src: 'https://example.com/photo.png', width: 100, height: 100 });
+    expect(img.img.src).toBe('https://example.com/photo.png');
+  });
+
+  it('does NOT set src when given undefined', () => {
+    const { img } = makeImage();
+    img.changeAttribute('src', undefined);
+    expect(img.img.src).toBe('');
+  });
+
+  it('does NOT set src when given an object with no src field', () => {
+    const { img } = makeImage();
+    img.changeAttribute('src', { path: 'logo', width: 100, height: 100 });
+    expect(img.img.src).toBe('');
+  });
+});
+
+describe('WebValdiImage – error handling', () => {
+  afterEach(() => uninstallDomStubs());
+
+  it('calls onAssetLoad with zero dimensions on error', () => {
+    const { img } = makeImage();
+    let reportedW = -1;
+    let reportedH = -1;
+    img.changeAttribute('onAssetLoad', (e: { width: number; height: number }) => {
+      reportedW = e.width;
+      reportedH = e.height;
+    });
+    img.img.onerror?.({} as any);
+
+    expect(reportedW).toBe(0);
+    expect(reportedH).toBe(0);
+  });
+
+  it('sets onerror handler on the internal img element', () => {
+    const { img } = makeImage();
+    expect(img.img.onerror).not.toBeNull();
+  });
+});
+
 describe('WebValdiImage – 3x asset handling', () => {
   afterEach(() => uninstallDomStubs());
 

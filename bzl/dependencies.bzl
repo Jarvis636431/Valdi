@@ -1,5 +1,6 @@
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 load("//bzl:nested_repository.bzl", "nested_repository")
+load("//bzl:valdi_compiler_swift_deps.bzl", "setup_valdi_compiler_swift_deps")
 
 def local_or_nested_repository(workspace_root, name, path):
     if workspace_root:
@@ -32,8 +33,8 @@ def setup_dependencies(workspace_root = None):
     http_archive(
         name = "com_google_protobuf",
         #sha256 = "",
-        strip_prefix = "protobuf-27.0",
-        url = "https://github.com/protocolbuffers/protobuf/releases/download/v27.0/protobuf-27.0.tar.gz",
+        strip_prefix = "protobuf-29.3",
+        url = "https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protobuf-29.3.tar.gz",
     )
 
     http_archive(
@@ -49,7 +50,7 @@ def setup_dependencies(workspace_root = None):
         strip_prefix = "rules_android_ndk-0.1.3",
         url = "https://github.com/bazelbuild/rules_android_ndk/releases/download/v0.1.3/rules_android_ndk-v0.1.3.tar.gz",
         patches = [
-            "@valdi//third-party/rules_android_ndk/patches:expose_bins.patch",
+            "@valdi//registry/modules/rules_android_ndk/0.1.3/patches:rules_android_ndk.patch",
         ],
     )
 
@@ -80,13 +81,13 @@ def setup_dependencies(workspace_root = None):
         name = "rules_kotlin",
         url = "https://github.com/bazelbuild/rules_kotlin/releases/download/v1.9.0/rules_kotlin-v1.9.0.tar.gz",
         sha256 = "5766f1e599acf551aa56f49dab9ab9108269b03c557496c54acaf41f98e2b8d6",
-        patches = ["@valdi//third-party/rules_kotlin:fix_manifest_custom_package.patch"],
+        patches = ["@valdi//registry/modules/rules_kotlin/1.9.0/patches:rules_kotlin.patch"],
     )
 
     http_archive(
         name = "rules_java",
-        sha256 = "976ef08b49c929741f201790e59e3807c72ad81f428c8bc953cdbeff5fed15eb",
-        url = "https://github.com/bazelbuild/rules_java/releases/download/7.4.0/rules_java-7.4.0.tar.gz",
+        sha256 = "bbe7d94360cc9ed4607ec5fd94995fd1ec41e84257020b6f09e64055281ecb12",
+        url = "https://github.com/bazelbuild/rules_java/releases/download/8.14.0/rules_java-8.14.0.tar.gz",
     )
 
     http_archive(
@@ -107,7 +108,7 @@ def setup_dependencies(workspace_root = None):
         sha256 = "5eff717c18bb513285b499add68f2331509cd4e411ff085e96a86b3342c1e5aa",
         url = "https://github.com/bazelbuild/rules_swift/releases/download/3.1.2/rules_swift.3.1.2.tar.gz",
         patch_args = ["-p1"],
-        patches = ["@valdi//third-party/rules_swift/patches:rules_swift.patch"],
+        patches = ["@valdi//registry/modules/rules_swift/3.1.2/patches:rules_swift.patch"],
     )
 
     # rules_apple relies on rules_shell starting with 4.0.0. For bzlmod users,
@@ -159,6 +160,8 @@ def setup_dependencies(workspace_root = None):
         integrity = "sha256-+GQiTtN6H8TQz/+YkVz73dHeYAZ86/9hAUwTlkISx48=",
         strip_prefix = "hermes-880b1645b5dca974f4329dc4108692d301abee0d",
         build_file = "@valdi//third-party/hermes:hermes.BUILD",
+        patch_args = ["-p1"],
+        patches = ["@valdi//third-party/hermes/patches:nontrivial_memcall.patch"],
     )
 
     http_archive(
@@ -166,6 +169,13 @@ def setup_dependencies(workspace_root = None):
         strip_prefix = "googletest-1.13.0",
         url = "https://github.com/google/googletest/archive/refs/tags/v1.13.0.tar.gz",
         integrity = "sha256-rX/boR6gEcHZJbMonPSvLGajUuGNTHJkOS/q116Rk2M=",
+    )
+
+    http_archive(
+        name = "com_github_google_benchmark",
+        strip_prefix = "benchmark-1.9.5",
+        url = "https://github.com/google/benchmark/archive/refs/tags/v1.9.5.tar.gz",
+        integrity = "sha256-ljE0HIK6xKKIvvlR+LJrQfaQIXlBhOzpafhHOXfqo0A=",
     )
 
     http_archive(
@@ -253,12 +263,6 @@ def setup_dependencies(workspace_root = None):
         workspace_root = workspace_root,
         name = "valdi_toolchain",
         path = "/bin",
-    )
-
-    local_or_nested_repository(
-        workspace_root = workspace_root,
-        name = "resvg_libs",
-        path = "/third-party/resvg/resvg_libs",
     )
 
     # From https://github.com/open-source-parsers/jsoncpp/releases/tag/1.8.0
@@ -395,9 +399,9 @@ def setup_dependencies(workspace_root = None):
 
     http_archive(
         name = "aspect_rules_js",
-        sha256 = "6b7e73c35b97615a09281090da3645d9f03b2a09e8caa791377ad9022c88e2e6",
-        strip_prefix = "rules_js-2.0.0",
-        url = "https://github.com/aspect-build/rules_js/releases/download/v2.0.0/rules_js-v2.0.0.tar.gz",
+        sha256 = "1774702556e1d0b83b7f5eb58ec95676afe6481c62596b53f5b96575bacccf73",
+        strip_prefix = "rules_js-2.9.2",
+        url = "https://github.com/aspect-build/rules_js/releases/download/v2.9.2/rules_js-v2.9.2.tar.gz",
     )
 
     http_archive(
@@ -421,6 +425,12 @@ def setup_dependencies(workspace_root = None):
         url = "https://github.com/bazel-contrib/bazel-lib/releases/download/v2.21.2/bazel-lib-v2.21.2.tar.gz",
     )
 
+    http_archive(
+        name = "rules_rust",
+        integrity = "sha256-2GH766nwQzOgrmnkSO6D1pF/JC3bt/41xo/CEqarpUY=",
+        urls = ["https://github.com/bazelbuild/rules_rust/releases/download/0.64.0/rules_rust-0.64.0.tar.gz"],
+    )
+
     # fuzzing rules directly copied from https://github.com/bazelbuild/rules_fuzzing/tree/1dbcd9167300ad226d29972f5f9c925d6d81f441?tab=readme-ov-file#configuring-the-workspace
     http_archive(
         name = "rules_fuzzing",
@@ -438,10 +448,20 @@ def setup_dependencies(workspace_root = None):
 
     http_archive(
         name = "resvg",
-        url = "https://github.com/RazrFalcon/resvg/archive/a739aef5d01360ec238c886bc50674f31458df00.zip",
+        url = "https://github.com/linebender/resvg/archive/b3c7f58d059da6aa0a25141b1948c61b8c579c12.zip",
         build_file = "@valdi//third-party/resvg:resvg.BUILD",
-        strip_prefix = "resvg-a739aef5d01360ec238c886bc50674f31458df00",
-        integrity = "sha256-kohUhIYyFoaeIHLBhYwq6g7+h34r3i9/IIQoWyJAmSE=",
+        strip_prefix = "resvg-b3c7f58d059da6aa0a25141b1948c61b8c579c12",
+        integrity = "sha256-0F/rzIZh2AQW3zyJ8S0c269xlbCvn8rFSAI2r0jLdgU=",
+    )
+
+    http_archive(
+        name = "pngquant",
+        url = "https://github.com/kornelski/pngquant/archive/5b4e91f5dd6af27c928474ffd526bb69e17b0f37.zip",
+        build_file = "@valdi//third-party/pngquant:pngquant.BUILD",
+        strip_prefix = "pngquant-5b4e91f5dd6af27c928474ffd526bb69e17b0f37",
+        integrity = "sha256-CqMGdZFDTa+6gyxJN3Wvr6d5O4ezR9xvyBd1tzUNR+8=",
+        patch_args = ["-p1"],
+        patches = ["@valdi//third-party/pngquant:pngquant-build-script-bazel-headers.patch"],
     )
 
     http_archive(
@@ -454,7 +474,9 @@ def setup_dependencies(workspace_root = None):
     http_archive(
         name = "libjpeg_turbo",
         build_file = "@skia//bazel/external/libjpeg_turbo:BUILD.bazel",
-        url = "https://chromium.googlesource.com/chromium/deps/libjpeg_turbo/+archive/e14cbfaa85529d47f9f55b0f104a579c1061f9ad.tar.gz",
+        url = "https://github.com/librepo/chromium-libjpeg_turbo/archive/e14cbfaa85529d47f9f55b0f104a579c1061f9ad.tar.gz",
+        strip_prefix = "chromium-libjpeg_turbo-e14cbfaa85529d47f9f55b0f104a579c1061f9ad",
+        integrity = "sha256-tjyUKJeHb8oX2Y8LcO+b4P1GUWHsGaf3dQHOtN/bnf4=",
         patches = [
             "@valdi//third-party/libjpeg_turbo:warning_fix.patch",
         ],
@@ -463,7 +485,9 @@ def setup_dependencies(workspace_root = None):
     http_archive(
         name = "libpng",
         build_file = "@skia//bazel/external/libpng:BUILD.bazel",
-        url = "https://skia.googlesource.com/third_party/libpng.git/+archive/ed217e3e601d8e462f7fd1e04bed43ac42212429.tar.gz",
+        url = "https://github.com/aosp-mirror/platform_external_libpng/archive/ed217e3e601d8e462f7fd1e04bed43ac42212429.tar.gz",
+        strip_prefix = "platform_external_libpng-ed217e3e601d8e462f7fd1e04bed43ac42212429",
+        integrity = "sha256-W+kzz3e2EKLJ2pqXKwV4v7TAmJJAW2T0PpLD0K4s48Q=",
         patch_args = ["-p1"],
         patches = [
             "@valdi//third-party/libpng:fix_armv7.patch",
@@ -480,7 +504,9 @@ def setup_dependencies(workspace_root = None):
     http_archive(
         name = "zlib_skia",
         build_file = "@skia//bazel/external/zlib_skia:BUILD.bazel",
-        url = "https://chromium.googlesource.com/chromium/src/third_party/zlib/+archive/646b7f569718921d7d4b5b8e22572ff6c76f2596.tar.gz",
+        url = "https://github.com/gsource-mirror/chromium-src-third_party-zlib/archive/646b7f569718921d7d4b5b8e22572ff6c76f2596.tar.gz",
+        strip_prefix = "chromium-src-third_party-zlib-646b7f569718921d7d4b5b8e22572ff6c76f2596",
+        integrity = "sha256-3Wrc+RYXSPFcLyzH36k5cRldSn8jWknXXbTMVDhclo4=",
         patch_args = ["-p1"],
         patches = [
             "@valdi//third-party/zlib_skia:android_ios_x86_64.patch",
@@ -520,3 +546,7 @@ def setup_dependencies(workspace_root = None):
         strip_prefix = "ocmock-3.9.4",
         url = "https://github.com/erikdoe/ocmock/archive/refs/tags/v3.9.4.tar.gz",
     )
+
+    # Swift Package Manager deps for //compiler/compiler:local_valdi_compiler.
+    # See bzl/valdi_compiler_swift_deps.bzl.
+    setup_valdi_compiler_swift_deps()

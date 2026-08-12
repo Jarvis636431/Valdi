@@ -1,17 +1,41 @@
+load("@aspect_rules_ts//ts:defs.bzl", "ts_project")
 load("//bzl/valdi:valdi_module.bzl", "valdi_module")
+
+ts_project(
+    name = "hello_world_web",
+    srcs = glob([
+        "web/**/*.ts",
+        "src/**/*.d.ts",
+    ]),
+    allow_js = True,
+    composite = True,
+    declaration = True,
+    transpiler = "tsc",
+    tsconfig = "web/tsconfig.json",
+)
 
 valdi_module(
     name = "hello_world",
     srcs = glob([
         "src/**/*.ts",
         "src/**/*.tsx",
+        # Byte-exact bundled data (github.com/Snapchat/Valdi#116): .bin files in
+        # srcs are bundled verbatim and retrievable via getModuleFileEntryAsBytes,
+        # unlike res/ images which are re-encoded to lossy, density-scaled WebP.
+        "src/**/*.bin",
     ]) + [
         "tsconfig.json",
     ],
     android_class_path = "com.snap.valdi.modules.hello_world",
     android_deps = ["//apps/helloworld/src/android:native_module_android"],
     android_output_target = "release",
+    # Inline bundled assets so getModuleFileEntryAsBytes can read them at runtime.
+    inline_assets = True,
     ios_deps = ["//apps/helloworld/src/ios:native_module_ios"],
+    ios_language = [
+        "objc",
+        "swift",
+    ],
     ios_module_name = "SCCHelloWorld",
     ios_output_target = "release",
     native_deps = ["//apps/helloworld/src/cpp:native_module_cpp"],
@@ -23,7 +47,13 @@ valdi_module(
         "res/**/*.webp",
     ]),
     visibility = ["//visibility:public"],
+    web_deps = [":hello_world_web"],
+    web_register_native_module_id_overrides = {
+        "hello_world/web/CppModule.js": "hello_world/src/CppModule",
+        "hello_world/web/NativeModule.js": "hello_world/src/NativeModule",
+    },
     deps = [
+        "//src/valdi_modules/src/valdi/drawing",
         "//src/valdi_modules/src/valdi/valdi_core",
         "//src/valdi_modules/src/valdi/valdi_tsx",
     ],

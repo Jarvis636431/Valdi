@@ -4,27 +4,28 @@ import android.content.Context
 import android.text.InputType
 import android.graphics.Color
 import android.text.InputFilter
+import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import com.snap.valdi.attributes.AttributesBinder
 import com.snap.valdi.attributes.AttributesBindingContext
 import com.snap.valdi.attributes.impl.animations.ValdiAnimator
+import com.snap.valdi.attributes.impl.fonts.FontManager
 import com.snap.valdi.attributes.impl.richtext.FontAttributes
-import com.snap.valdi.attributes.impl.richtext.RichTextConverter
 import com.snap.valdi.attributes.impl.richtext.TextViewHelper
 import com.snap.valdi.callable.ValdiFunction
-import com.snap.valdi.exceptions.ValdiException
+import com.snap.valdi.logger.Logger
 import com.snap.valdi.views.ValdiEditText
-import com.snap.valdi.views.ValdiTextHolder
-import com.snap.valdi.exceptions.AttributeError
-import kotlin.math.roundToInt
+import com.snap.valdi.views.ValdiEditTextMultiline
 
 /**
  * Binds attributes for the EditText's view class
  */
 class EditTextAttributesBinder(private val context: Context,
-                               private val textConverter: RichTextConverter,
-                               private val defaultAttributes: FontAttributes
+                               private val fontManager: FontManager,
+                               private val defaultAttributes: FontAttributes,
+                               private val resetSelectionMatchesIos: Boolean,
+                               private val logger: Logger
 ) : AttributesBinder<ValdiEditText> {
 
     private var valueAttributeId = 0
@@ -51,6 +52,12 @@ class EditTextAttributesBinder(private val context: Context,
             false,
             this::applyEnabled,
             this::resetEnabled
+        )
+        attributesBindingContext.bindBooleanAttribute(
+            "selectable",
+            false,
+            this::applySelectable,
+            this::resetSelectable
         )
         attributesBindingContext.bindFunctionAttribute(
             "onWillChange",
@@ -136,6 +143,14 @@ class EditTextAttributesBinder(private val context: Context,
             this::applySelectTextOnFocus,
             this::resetSelectTextOnFocus
         )
+        attributesBindingContext.setPlaceholderViewMeasureDelegate(lazy {
+            ValdiEditText(context).apply {
+                layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            }
+        })
         attributesBindingContext.bindColorAttribute(
             "tintColor", // iOS-only
             false,
@@ -149,32 +164,18 @@ class EditTextAttributesBinder(private val context: Context,
             this::resetKeyboardAppearance
         )
 
-        attributesBindingContext.setPlaceholderViewMeasureDelegate(lazy {
-            ValdiEditText(context).apply {
-                layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT
-                )
-            }
-        })
-
-        attributesBindingContext.bindUntypedAttribute(
-            "selection",
-            false,
-            this::applySelection,
-            this::resetSelection
-        )
-        attributesBindingContext.bindFunctionAttribute(
-            "onSelectionChange",
-            this::applyOnSelectionChange,
-            this::resetOnSelectionChange
-        )
-
         attributesBindingContext.bindBooleanAttribute(
             "enableInlinePredictions",
             false,
             this::applyEnableInlinePredictionsNoop,
             this::resetEnableInlinePredictionsNoop,
+        )
+
+        attributesBindingContext.bindStringAttribute(
+            "textDirection",
+            false,
+            this::applyTextDirection,
+            this::resetTextDirection,
         )
 
         attributesBindingContext.bindColorAttribute(
@@ -203,52 +204,53 @@ class EditTextAttributesBinder(private val context: Context,
     }
 
     private fun getTextViewHelper(view: ValdiEditText): TextViewHelper {
-        if (view !is ValdiTextHolder) {
-            throw ValdiException("TextView class ${view.javaClass.name} does not implement ValdiTextHolder")
+        return view.getOrCreateTextViewHelper(fontManager, defaultAttributes, valueAttributeId, logger).also {
+            it.matchIosTextSetCaret = resetSelectionMatchesIos
         }
-        var helper = view.textViewHelper
-        if (helper == null) {
-            helper = TextViewHelper(view, textConverter, defaultAttributes, valueAttributeId)
-            view.textViewHelper = helper
-        }
-
-        return helper
     }
 
     private fun applyHint(view: ValdiEditText, value: String, animator: ValdiAnimator?) {
-        view.hint = value
+        view.backingEditTextInput.hint = value
     }
 
     private fun resetHint(view: ValdiEditText, animator: ValdiAnimator?) {
-        view.hint = null
+        view.backingEditTextInput.hint = null
     }
 
     private fun applyHintTextColor(view: ValdiEditText, value: Int, animator: ValdiAnimator?) {
-        view.setHintTextColor(value)
+        view.backingEditTextInput.setHintTextColor(value)
     }
 
     private fun resetHintTextColor(view: ValdiEditText, animator: ValdiAnimator?) {
-        view.setHintTextColor(Color.GRAY)
+        view.backingEditTextInput.setHintTextColor(Color.GRAY)
+    }
+
+    private fun applySelectable(editText: ValdiEditText, value: Boolean, animator: ValdiAnimator?) {
+        editText.backingEditTextInput.setValdiSelectable(value)
+    }
+
+    private fun resetSelectable(editText: ValdiEditText, animator: ValdiAnimator?) {
+        editText.backingEditTextInput.setValdiSelectable(true)
     }
 
     private fun applyAutoCapitalization(editText: ValdiEditText, value: String, animator: ValdiAnimator?) {
-        val clearedInputType = editText.inputType and (
+        val clearedInputType = editText.backingEditTextInput.valdiInputType and (
             InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or
             InputType.TYPE_TEXT_FLAG_CAP_WORDS or
             InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
         ).inv()
         when (value) {
             "sentences" -> {
-                editText.inputType = clearedInputType or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+                editText.backingEditTextInput.setValdiInputType(clearedInputType or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES)
             }
             "words" -> {
-                editText.inputType = clearedInputType or InputType.TYPE_TEXT_FLAG_CAP_WORDS
+                editText.backingEditTextInput.setValdiInputType(clearedInputType or InputType.TYPE_TEXT_FLAG_CAP_WORDS)
             }
             "characters" -> {
-                editText.inputType = clearedInputType or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+                editText.backingEditTextInput.setValdiInputType(clearedInputType or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS)
             }
             "none" -> {
-                editText.inputType = clearedInputType
+                editText.backingEditTextInput.setValdiInputType(clearedInputType)
             }
         }
     }
@@ -259,9 +261,9 @@ class EditTextAttributesBinder(private val context: Context,
 
     private fun applyFocus(view: ValdiEditText, value: Boolean, animator: ValdiAnimator?) {
         if (value) {
-            view.doFocus()
+            view.backingEditTextInput.doFocus()
         } else {
-            view.doUnfocus(ValdiEditText.UnfocusReason.Unknown)
+            view.backingEditTextInput.doUnfocus(ValdiEditText.UnfocusReason.Unknown)
         }
     }
 
@@ -270,8 +272,12 @@ class EditTextAttributesBinder(private val context: Context,
     }
 
     private fun applyEnabled(view: ValdiEditText, value: Boolean, animator: ValdiAnimator?) {
-        view.isFocusable = value
-        view.isFocusableInTouchMode = value
+        if (view is ValdiEditTextMultiline) {
+            view.backingEditTextInput.setValdiEditable(value)
+        } else {
+            view.backingTextView.isFocusable = value
+            view.backingTextView.isFocusableInTouchMode = value
+        }
     }
 
     private fun resetEnabled(view: ValdiEditText, animator: ValdiAnimator?) {
@@ -279,51 +285,51 @@ class EditTextAttributesBinder(private val context: Context,
     }
 
     private fun applyOnWillChange(view: ValdiEditText, action: ValdiFunction) {
-        view.onWillChangeFunction = action
+        view.backingEditTextInput.onWillChangeFunction = action
     }
 
     private fun resetOnWillChange(view: ValdiEditText) {
-        view.onWillChangeFunction = null
+        view.backingEditTextInput.onWillChangeFunction = null
     }
 
     private fun applyOnChange(view: ValdiEditText, action: ValdiFunction) {
-        view.onChangeFunction = action
+        view.backingEditTextInput.onChangeFunction = action
     }
 
     private fun resetOnChange(view: ValdiEditText) {
-        view.onChangeFunction = null
+        view.backingEditTextInput.onChangeFunction = null
     }
 
     private fun applyOnEditBegin(view: ValdiEditText, function: ValdiFunction) {
-        view.onEditBeginFunction = function
+        view.backingEditTextInput.onEditBeginFunction = function
     }
 
     private fun resetOnEditBegin(view: ValdiEditText) {
-        view.onEditBeginFunction = null
+        view.backingEditTextInput.onEditBeginFunction = null
     }
 
     private fun applyOnEditEnd(view: ValdiEditText, function: ValdiFunction) {
-        view.onEditEndFunction = function
+        view.backingEditTextInput.onEditEndFunction = function
     }
 
     private fun resetOnEditEnd(view: ValdiEditText) {
-        view.onEditEndFunction = null
+        view.backingEditTextInput.onEditEndFunction = null
     }
 
     private fun applyOnReturn(view: ValdiEditText, function: ValdiFunction) {
-        view.onReturnFunction = function
+        view.backingEditTextInput.onReturnFunction = function
     }
 
     private fun resetOnReturn(view: ValdiEditText) {
-        view.onReturnFunction = null
+        view.backingEditTextInput.onReturnFunction = null
     }
 
     private fun applyOnWillDelete(view: ValdiEditText, function: ValdiFunction) {
-        view.onWillDeleteFunction = function
+        view.backingEditTextInput.onWillDeleteFunction = function
     }
 
     private fun resetOnWillDelete(view: ValdiEditText) {
-        view.onWillDeleteFunction = null
+        view.backingEditTextInput.onWillDeleteFunction = null
     }
 
     private fun applyValue(editText: ValdiEditText, value: Any?, animator: ValdiAnimator?) {
@@ -332,16 +338,21 @@ class EditTextAttributesBinder(private val context: Context,
     }
 
     private fun resetValue(editText: ValdiEditText, animator: ValdiAnimator?) {
-        editText.textViewHelper = null
-        editText.setText("")
+        // Clear the text through the helper rather than discarding the helper itself. It also holds
+        // fontAttributes, textGradient, selection, numberOfLines and the viewNode, and the attribute
+        // system only re-applies a value when it changes — so dropping the helper loses all of that
+        // until something unrelated happens to change, which is what master's `textValue = null` did
+        // not do.
+        getTextViewHelper(editText).textValue = null
+        editText.backingEditTextInput.setText("")
     }
 
     private fun applyCharacterLimit(editText: ValdiEditText, value: Int?, animator: ValdiAnimator?) {
-        editText.setCharacterLimit(value)
+        editText.backingEditTextInput.setCharacterLimit(value)
         if (value == null) {
-            editText.filters = emptyArray()
+            editText.backingEditTextInput.filters = emptyArray()
         } else {
-            editText.filters = arrayOf(InputFilter.LengthFilter(value.toInt()))
+            editText.backingEditTextInput.filters = arrayOf(InputFilter.LengthFilter(value.toInt()))
         }
     }
 
@@ -350,15 +361,15 @@ class EditTextAttributesBinder(private val context: Context,
     }
 
     private fun applyClosesWhenReturnKeyPressed(editText: ValdiEditText, value: Boolean, animator: ValdiAnimator?) {
-        editText.closesWhenReturnKeyPressed = value
+        editText.backingEditTextInput.closesWhenReturnKeyPressed = value
     }
 
     private fun resetClosesWhenReturnKeyPressed(editText: ValdiEditText, animator: ValdiAnimator?) {
-        applyClosesWhenReturnKeyPressed(editText, editText.closesWhenReturnKeyPressedDefault, animator)
+        applyClosesWhenReturnKeyPressed(editText, editText.backingEditTextInput.closesWhenReturnKeyPressedDefault, animator)
     }
 
-    fun applyReturnKeyText(editText: ValdiEditText, value: String, animator: ValdiAnimator?) {
-        editText.imeOptions = when (value) {
+    private fun applyReturnKeyText(editText: ValdiEditText, value: String, animator: ValdiAnimator?) {
+        editText.backingEditTextInput.imeOptions = when (value) {
             "go" -> EditorInfo.IME_ACTION_GO
             "join" -> EditorInfo.IME_ACTION_NEXT
             "next" -> EditorInfo.IME_ACTION_NEXT
@@ -369,12 +380,12 @@ class EditTextAttributesBinder(private val context: Context,
         }
     }
 
-    fun resetReturnKeyText(editText: ValdiEditText, animator: ValdiAnimator?) {
+    private fun resetReturnKeyText(editText: ValdiEditText, animator: ValdiAnimator?) {
         applyReturnKeyText(editText, "done", animator)
     }
 
     private fun applySelectTextOnFocus(editText: ValdiEditText, value: Boolean, animator: ValdiAnimator?) {
-        editText.selectTextOnFocus = value
+        editText.backingEditTextInput.selectTextOnFocus = value
     }
 
     private fun resetSelectTextOnFocus(editText: ValdiEditText, animator: ValdiAnimator?) {
@@ -382,16 +393,16 @@ class EditTextAttributesBinder(private val context: Context,
     }
 
     private fun applyAutocorrection(editText: ValdiEditText, value: String, animator: ValdiAnimator?) {
-        val clearedInputType = editText.inputType and (
+        val clearedInputType = editText.backingEditTextInput.valdiInputType and (
             InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
             InputType.TYPE_TEXT_FLAG_AUTO_CORRECT
         ).inv()
         when (value) {
             "none"-> {
-                editText.inputType = clearedInputType or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                editText.backingEditTextInput.setValdiInputType(clearedInputType or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS)
             }
             else -> {
-                editText.inputType = clearedInputType or InputType.TYPE_TEXT_FLAG_AUTO_CORRECT
+                editText.backingEditTextInput.setValdiInputType(clearedInputType or InputType.TYPE_TEXT_FLAG_AUTO_CORRECT)
             }
         }
     }
@@ -401,46 +412,47 @@ class EditTextAttributesBinder(private val context: Context,
     }
 
     private fun applyContentType(editText: ValdiEditText, value: String, animator: ValdiAnimator?) {
-        val inputType = editText.inputType
+        val inputType = editText.backingEditTextInput.valdiInputType
         val clearedInputType = (inputType and InputType.TYPE_MASK_VARIATION.inv() and InputType.TYPE_MASK_CLASS.inv())
 
         when (value) {
             "phoneNumber"-> {
-                editText.inputType = clearedInputType or InputType.TYPE_CLASS_PHONE
+                editText.backingEditTextInput.setValdiInputType(clearedInputType or InputType.TYPE_CLASS_PHONE)
             }
             "password" -> {
-                editText.inputType = clearedInputType or InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                editText.backingEditTextInput.setValdiInputType(clearedInputType or InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
             }
             "email" -> {
-                editText.inputType = clearedInputType or InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+                editText.backingEditTextInput.setValdiInputType(clearedInputType or InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS)
             }
             "url" -> {
-                editText.inputType = clearedInputType or InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+                editText.backingEditTextInput.setValdiInputType(clearedInputType or InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
             }
             "number" -> {
-                editText.inputType = clearedInputType or InputType.TYPE_CLASS_NUMBER
+                editText.backingEditTextInput.setValdiInputType(clearedInputType or InputType.TYPE_CLASS_NUMBER)
             }
             "numberDecimal" -> {
-                editText.inputType = clearedInputType or InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+                editText.backingEditTextInput.setValdiInputType(clearedInputType or InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL)
             }
             "numberDecimalSigned" -> {
-                editText.inputType = clearedInputType or InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED
+                editText.backingEditTextInput.setValdiInputType(clearedInputType or InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED)
             }
             "passwordNumber" -> {
-                editText.inputType = clearedInputType or InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+                editText.backingEditTextInput.setValdiInputType(clearedInputType or InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD)
             }
             "passwordVisible" -> {
-                editText.inputType = clearedInputType or InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+                editText.backingEditTextInput.setValdiInputType(clearedInputType or InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD)
             }
             "noSuggestions" -> {
-                editText.inputType = clearedInputType or
-                        InputType.TYPE_CLASS_TEXT or
-                        InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
-                        InputType.TYPE_TEXT_VARIATION_FILTER or
-                        InputType.TYPE_TEXT_FLAG_AUTO_CORRECT.inv()
+                editText.backingEditTextInput.setValdiInputType(
+                        (clearedInputType or
+                                InputType.TYPE_CLASS_TEXT or
+                                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
+                                InputType.TYPE_TEXT_VARIATION_FILTER) and
+                                InputType.TYPE_TEXT_FLAG_AUTO_CORRECT.inv())
             }
             else -> {
-                editText.inputType = clearedInputType or InputType.TYPE_CLASS_TEXT
+                editText.backingEditTextInput.setValdiInputType(clearedInputType or InputType.TYPE_CLASS_TEXT)
             }
         }
     }
@@ -461,35 +473,6 @@ class EditTextAttributesBinder(private val context: Context,
     private fun resetKeyboardAppearance(editText: ValdiEditText, animator: ValdiAnimator?) {
     }
 
-    private fun applySelection(editText: ValdiEditText, selection: Any?, animator: ValdiAnimator?) {
-        if (selection !is Array<*>) {
-            resetSelection(editText, animator)
-            return
-        }
-
-        if (selection.size != ValdiEditText.EXPECTED_SELECTION_DATA_SIZE) {
-            throw AttributeError(
-                "Selection should have two values in the given array: start + end"
-            )
-        }
-
-        val start = (selection[0] as? Double)?.roundToInt() ?: 1
-        val end = (selection[1] as? Double)?.roundToInt() ?: 1
-       getTextViewHelper(editText).selection = Pair(start, end)
-    }
-
-    private fun resetSelection(editText: ValdiEditText, animator: ValdiAnimator?) {
-        editText.setSelection(0)
-    }
-
-    private fun applyOnSelectionChange(editText: ValdiEditText, action: ValdiFunction) {
-        editText.onSelectionChangeFunction = action
-    }
-
-    private fun resetOnSelectionChange(editText: ValdiEditText?) {
-        editText?.onSelectionChangeFunction = null
-    }
-
     private fun applyEnableInlinePredictionsNoop(view: ValdiEditText, value: Boolean, animator: ValdiAnimator?) {
         // No-op
     }
@@ -498,36 +481,49 @@ class EditTextAttributesBinder(private val context: Context,
         // No-op
     }
 
-    fun applyBackgroundEffectColor(view: ValdiEditText, value: Int, animator: ValdiAnimator?) {
-        if (view.backgroundEffects == null) {
-            view.backgroundEffects = ValdiTextViewBackgroundEffects()
+    private fun applyTextDirection(editText: ValdiEditText, value: String, animator: ValdiAnimator?) {
+        editText.textDirection = when (value) {
+            "ltr" -> View.TEXT_DIRECTION_LTR
+            "rtl" -> View.TEXT_DIRECTION_RTL
+            "locale" -> View.TEXT_DIRECTION_LOCALE
+            else -> View.TEXT_DIRECTION_LOCALE
         }
-        view.backgroundEffects?.color = value
+    }
+
+    private fun resetTextDirection(editText: ValdiEditText, animator: ValdiAnimator?) {
+        editText.textDirection = View.TEXT_DIRECTION_LOCALE
+    }
+
+    fun applyBackgroundEffectColor(view: ValdiEditText, value: Int, animator: ValdiAnimator?) {
+        if (view.backingEditTextInput.backgroundEffects == null) {
+            view.backingEditTextInput.backgroundEffects = ValdiTextViewBackgroundEffects()
+        }
+        view.backingEditTextInput.backgroundEffects?.color = value
     }
 
     fun resetBackgroundEffectColor(view: ValdiEditText, animator: ValdiAnimator?) {
-        view.backgroundEffects?.color = Color.TRANSPARENT
+        view.backingEditTextInput.backgroundEffects?.color = Color.TRANSPARENT
     }
 
     fun applyBackgroundEffectBorderRadius(view: ValdiEditText, value: Float, animator: ValdiAnimator?) {
-        if (view.backgroundEffects == null) {
-            view.backgroundEffects = ValdiTextViewBackgroundEffects()
+        if (view.backingEditTextInput.backgroundEffects == null) {
+            view.backingEditTextInput.backgroundEffects = ValdiTextViewBackgroundEffects()
         }
-        view.backgroundEffects?.borderRadius = value * scaledDensity
+        view.backingEditTextInput.backgroundEffects?.borderRadius = value * scaledDensity
     }
 
     fun resetBackgroundEffectBorderRadius(view: ValdiEditText, animator: ValdiAnimator?) {
-        view.backgroundEffects?.borderRadius = 0f
+        view.backingEditTextInput.backgroundEffects?.borderRadius = 0f
     }
 
     fun applyBackgroundEffectPadding(view: ValdiEditText, value: Float, animator: ValdiAnimator?) {
-        if (view.backgroundEffects == null) {
-            view.backgroundEffects = ValdiTextViewBackgroundEffects()
+        if (view.backingEditTextInput.backgroundEffects == null) {
+            view.backingEditTextInput.backgroundEffects = ValdiTextViewBackgroundEffects()
         }
-        view.backgroundEffects?.padding = value.toDouble() * scaledDensity
+        view.backingEditTextInput.backgroundEffects?.padding = value.toDouble() * scaledDensity
     }
 
     fun resetBackgroundEffectPadding(view: ValdiEditText, animator: ValdiAnimator?) {
-        view.backgroundEffects?.padding = 0.0
+        view.backingEditTextInput.backgroundEffects?.padding = 0.0
     }
 }

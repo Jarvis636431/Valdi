@@ -13,7 +13,6 @@
 #include "valdi/runtime/Context/Context.hpp"
 #include "valdi/runtime/Context/RawViewNodeId.hpp"
 #include "valdi/runtime/Context/ViewNode.hpp"
-#include "valdi/runtime/Views/Measure.hpp"
 #include "valdi/runtime/Views/View.hpp"
 #include "valdi/runtime/Views/ViewFactory.hpp"
 #include "valdi/runtime/Views/ViewTransactionScope.hpp"
@@ -21,6 +20,7 @@
 #include "valdi_core/cpp/Utils/Mutex.hpp"
 #include "valdi_core/cpp/Utils/TrackedLock.hpp"
 #include "valdi_core/cpp/Utils/ValdiObject.hpp"
+#include "valdi_core/cpp/Views/Measure.hpp"
 #include <chrono>
 #include <deque>
 #include <optional>
@@ -233,6 +233,7 @@ public:
     void setAssetTracker(const Ref<IViewNodesAssetTracker>& assetTracker);
 
     void onNextLayout(const Ref<ValueFunction>& callback);
+    void onNextDraw(const Ref<ValueFunction>& callback);
 
     [[nodiscard]] ViewNodeTreeDisableUpdates beginDisableUpdates();
 
@@ -270,6 +271,7 @@ private:
     Ref<ViewTransactionScope> _currentViewTransactionScope;
     std::deque<ViewNodeTreeUpdates> _updateFunctions;
     std::vector<Ref<ValueFunction>> _onLayoutCallbacks;
+    std::vector<Ref<ValueFunction>> _onDrawCallbacks;
     mutable RecursiveMutex _mutex;
 
     FlatMap<AnimationCancelToken, SharedAnimator> _pendingCancellableAnimations;
@@ -316,6 +318,7 @@ private:
     void runUpdatesInner();
 
     void flushOnLayoutCallbacks();
+    void flushOnDrawCallbacks();
 
     void schedulePerformUpdates();
     void performUpdatesIfLayoutSpecsUpToDate();

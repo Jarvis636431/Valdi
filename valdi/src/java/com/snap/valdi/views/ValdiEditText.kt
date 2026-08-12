@@ -4,59 +4,73 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Rect
+import android.os.Build
 import android.text.InputType
 import android.text.Spannable
 import android.text.SpannableString
 import android.text.SpannableStringBuilder
 import android.text.TextUtils
+import android.text.method.KeyListener
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import androidx.annotation.Keep
 import androidx.appcompat.widget.AppCompatEditText
+import androidx.core.view.inputmethod.EditorInfoCompat
+import androidx.core.view.inputmethod.InputConnectionCompat
 import com.snap.valdi.attributes.impl.ValdiTextViewBackgroundEffects
 import com.snap.valdi.attributes.impl.ValdiTextViewBackgroundEffectsLayoutManager
 import com.snap.valdi.attributes.impl.richtext.AttributedText
-import com.snap.valdi.attributes.impl.richtext.OnLayoutSpan
 import com.snap.valdi.attributes.impl.richtext.TextViewHelper
 import com.snap.valdi.callable.ValdiFunction
 import com.snap.valdi.callable.performSync
 import com.snap.valdi.exceptions.ValdiException
 import com.snap.valdi.extensions.ViewUtils
 import com.snap.valdi.logger.Logger
-import com.snap.valdi.utils.ValdiMarshaller
 import com.snap.valdi.utils.InternedString
+import com.snap.valdi.utils.ValdiMarshaller
 import com.snap.valdi.utils.error
 
 @Keep
-open class ValdiEditText(context: Context) : AppCompatEditText(context), ValdiTouchTarget, ValdiRecyclableView, ValdiTextHolder {
-    var backgroundEffects: ValdiTextViewBackgroundEffects? = null
-    private val backgroundEffectsLayoutManager by lazy {
-        ValdiTextViewBackgroundEffectsLayoutManager(this)
+open class ValdiEditText(context: Context) : ValdiTextViewBase(context, ValdiEditTextInput(context)) {
+
+    init {
+        backingEditTextInput.textHolder = this
     }
 
-    override var textViewHelper: TextViewHelper? = null
+    val backingEditTextInput: ValdiEditTextInput
+        get() = backingTextView as ValdiEditTextInput
+
+    override fun configureTextViewHelper(helper: TextViewHelper) {
+        helper.managesNumberOfLines = false
+        helper.disableTextReplacement = true
+    }
+
+    override var onSelectionChangeFunction: ValdiFunction?
+        get() = backingEditTextInput.onSelectionChangeFunction
         set(value) {
-            field = value
-            value?.managesNumberOfLines = false
-            value?.disableTextReplacement = true
+            backingEditTextInput.onSelectionChangeFunction = value
         }
 
-    // Necessary for drawing
-    override fun onDraw(canvas: Canvas) {
-        backgroundEffects?.let {
-            backgroundEffectsLayoutManager.drawBackgroundEffects(canvas, it)
-        }
+    override fun setValdiSelectable(selectable: Boolean) {
+        backingEditTextInput.setValdiSelectable(selectable)
+    }
 
-        super.onDraw(canvas)
-        attributedText?.let {
-            if (isAttributedText && it.hasOutline()) {
-                textViewHelper?.drawOnTopAttributedText(canvas, layout, it)
-            }
-        }
+    override fun setValdiSelection(start: Int, end: Int) {
+        backingEditTextInput.setValdiSelection(start, end)
+    }
+
+    override fun setTextAccessibility(text: CharSequence?) {
+        backingEditTextInput.setTextAccessibility(text)
+    }
+
+    override fun prepareForRecycling() {
+        super.prepareForRecycling()
+        backingEditTextInput.setText("")
     }
 
     // Maps to the typescript's EditTextUnfocusReason
@@ -65,21 +79,88 @@ open class ValdiEditText(context: Context) : AppCompatEditText(context), ValdiTo
         ReturnKeyPress(1),
         DismissKeyPress(2),
     }
+}
+
+class ValdiEditTextInput(context: Context) : AppCompatEditText(context), ValdiTouchTarget {
+    protected val owner: ValdiTextViewBase?
+        get() = parent as? ValdiTextViewBase
+
+    protected val editTextOwner: ValdiEditText?
+        get() = owner as? ValdiEditText
+
+    lateinit var textHolder: ValdiTextHolder
+
+    var backgroundEffects: ValdiTextViewBackgroundEffects? = null
+    private val backgroundEffectsLayoutManager by lazy {
+        ValdiTextViewBackgroundEffectsLayoutManager(this, textHolder)
+    }
 
     private val logger: Logger?
         get() {
-            return ViewUtils.findValdiContext(this)?.logger
+            return owner?.let { ViewUtils.findValdiContext(it)?.logger }
         }
 
     private var isAttributedText = false
     private var attributedText: AttributedText? = null
+    var setTextGeneration = 0
+        private set
+
+    var valdiInputType: Int = 0
+        private set
+
+    private var valdiEditable = true
+    private var editableKeyListener: KeyListener? = null
+    private var valdiSelectable = true
+
+    val isValdiEditable: Boolean
+        get() = valdiEditable
+
+    val isValdiSelectable: Boolean
+        get() = valdiSelectable
+
+    var closesWhenReturnKeyPressedDefault = true
+    var closesWhenReturnKeyPressed = true
+
+    var disableMediaContent: Boolean = false
+
+    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
+        val ic = super.onCreateInputConnection(outAttrs) ?: return null
+        if (!disableMediaContent) return ic
+        EditorInfoCompat.setContentMimeTypes(outAttrs, arrayOf("text/plain"))
+        return InputConnectionCompat.createWrapper(ic, outAttrs) { _, _, _ -> true }
+    }
+
+    var onWillChangeFunction: ValdiFunction? = null
+    var onChangeFunction: ValdiFunction? = null
+    var onEditBeginFunction: ValdiFunction? = null
+    var onEditEndFunction: ValdiFunction? = null
+    var onReturnFunction: ValdiFunction? = null
+    var onWillDeleteFunction: ValdiFunction? = null
+    var onSelectionChangeFunction: ValdiFunction? = null
+
+    private var ignoreNewlines: Boolean = false
+
+    var selectTextOnFocus: Boolean = false
+
+    private var characterLimit: Int? = null
+
+    protected var isSettingTextCount = 0
+
+    private var lastUnfocusReason = ValdiEditText.UnfocusReason.Unknown
+
+    private var lastFocusState = false
+    var pressesReturnOnLineBreak = false
+    var allowsSameViewGestureRecognizersWhenNotEditable = false
+
+    /** Set false by multiline variants (e.g. [ValdiEditTextMultiline]) to opt out of single-line clamping. */
+    var isValdiSingleLine: Boolean = true
 
     init {
-        layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         maxLines = 1
         ellipsize = TextUtils.TruncateAt.END
         includeFontPadding = false
-        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or InputType.TYPE_TEXT_FLAG_AUTO_CORRECT
+        setValdiInputType(InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or InputType.TYPE_TEXT_FLAG_AUTO_CORRECT)
         isFocusableInTouchMode = true
         gravity = Gravity.CENTER_VERTICAL
         textDirection = View.TEXT_DIRECTION_LOCALE
@@ -98,41 +179,74 @@ open class ValdiEditText(context: Context) : AppCompatEditText(context), ValdiTo
         }
     }
 
-    var closesWhenReturnKeyPressedDefault = true
-    var closesWhenReturnKeyPressed = true
+    // Necessary for drawing
+    override fun onDraw(canvas: Canvas) {
+        backgroundEffects?.let {
+            backgroundEffectsLayoutManager.drawBackgroundEffects(canvas, it)
+        }
 
-    var onWillChangeFunction: ValdiFunction? = null
-    var onChangeFunction: ValdiFunction? = null
-    var onEditBeginFunction: ValdiFunction? = null
-    var onEditEndFunction: ValdiFunction? = null
-    var onReturnFunction: ValdiFunction? = null
-    var onWillDeleteFunction: ValdiFunction? = null
-    var onSelectionChangeFunction: ValdiFunction? = null
-
-    private var ignoreNewlines: Boolean = false
-
-    var selectTextOnFocus: Boolean = false
-
-    private var characterLimit: Int? = null
-
-    protected var isSettingTextCount = 0
-
-    private var lastUnfocusReason = UnfocusReason.Unknown
-
-    private var lastFocusState = false
-
-    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        textViewHelper?.onMeasure(widthMeasureSpec, heightMeasureSpec)
-        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+        super.onDraw(canvas)
     }
 
-    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-        textViewHelper?.onLayout(changed)
-        super.onLayout(changed, left, top, right, bottom)
+    // Blocks applySingleLine(false) side-effects from setInputType — prevents transient multiline input types from enabling text wrapping.
+    override fun setMaxLines(maxLines: Int) {
+        super.setMaxLines(if (isValdiSingleLine) 1 else maxLines)
+    }
+
+    override fun setHorizontallyScrolling(whether: Boolean) {
+        super.setHorizontallyScrolling(if (isValdiSingleLine) true else whether)
+    }
+
+    fun setValdiInputType(value: Int) {
+        valdiInputType = value
+        super.setInputType(value)
+        editableKeyListener = keyListener
+        if (!valdiEditable) {
+            applyValdiEditableState()
+        }
+    }
+
+    fun setValdiEditable(editable: Boolean) {
+        valdiEditable = editable
+        applyValdiEditableState()
+        owner?.textViewHelper?.applyCurrentNumberOfLines()
+    }
+
+    fun setValdiSelectable(selectable: Boolean) {
+        valdiSelectable = selectable
+        applyValdiEditableState()
+        owner?.textViewHelper?.applyCurrentNumberOfLines()
+    }
+
+    private fun applyValdiEditableState() {
+        if (valdiEditable) {
+            setTextIsSelectable(false)
+            keyListener = editableKeyListener
+            super.setRawInputType(valdiInputType)
+            setShowSoftInputOnFocusCompat(true)
+            isCursorVisible = true
+            isFocusable = true
+            isFocusableInTouchMode = true
+        } else {
+            editableKeyListener = keyListener ?: editableKeyListener
+            keyListener = null
+            setShowSoftInputOnFocusCompat(false)
+            isCursorVisible = false
+            setTextIsSelectable(valdiSelectable)
+            isFocusable = true
+            isFocusableInTouchMode = true
+        }
+    }
+
+    private fun setShowSoftInputOnFocusCompat(value: Boolean) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            showSoftInputOnFocus = value
+        }
     }
 
     override fun requestFocus(direction: Int, previouslyFocusedRect: Rect?): Boolean {
-        val keyboardManager = ViewUtils.getKeyboardManager(this)
+        val owner = owner ?: return super.requestFocus(direction, previouslyFocusedRect)
+        val keyboardManager = ViewUtils.getKeyboardManager(owner)
         return if (keyboardManager != null) {
             keyboardManager.onRequestFocus(this) {
                 super.requestFocus(direction, previouslyFocusedRect)
@@ -144,16 +258,17 @@ open class ValdiEditText(context: Context) : AppCompatEditText(context), ValdiTo
 
     override fun onFocusChanged(focused: Boolean, direction: Int, previouslyFocusedRect: Rect?) {
         super.onFocusChanged(focused, direction, previouslyFocusedRect)
+        val owner = owner ?: return
 
-        ViewUtils.notifyAttributeChanged(this, focusedAttribute, focused)
+        ViewUtils.notifyAttributeChanged(owner, focusedAttribute, focused)
 
         if (focused) {
             callEventCallback(onEditBeginFunction)
         } else {
             callEventCallback(onEditEndFunction, reasonId=lastUnfocusReason.value)
-            ViewUtils.getKeyboardManager(this)?.hideKeyboard(this)
+            ViewUtils.getKeyboardManager(owner)?.hideKeyboard(this)
         }
-        lastUnfocusReason = UnfocusReason.Unknown
+        lastUnfocusReason = ValdiEditText.UnfocusReason.Unknown
 
         if (focused && selectTextOnFocus) {
             this.post {
@@ -168,14 +283,23 @@ open class ValdiEditText(context: Context) : AppCompatEditText(context), ValdiTo
     }
 
     override fun onDetachedFromWindow() {
+        val owner = owner
         if (lastFocusState) {
-            ViewUtils.getKeyboardManager(this)?.hideKeyboard(this)
+            owner?.let { ViewUtils.getKeyboardManager(it)?.hideKeyboard(this) }
         }
         super.onDetachedFromWindow()
     }
 
     override fun onTextChanged(text: CharSequence, start: Int, lengthBefore: Int, lengthAfter: Int) {
         super.onTextChanged(text, start, lengthBefore, lengthAfter)
+        val owner = owner ?: return
+
+        if (pressesReturnOnLineBreak && isSettingTextCount == 0) {
+            val end = start + lengthAfter - 1
+            if (end >= 0 && text.length > end && text[end] == '\n') {
+                onPressedReturn()
+            }
+        }
 
         if (isSettingTextCount == 0) {
 
@@ -203,25 +327,24 @@ open class ValdiEditText(context: Context) : AppCompatEditText(context), ValdiTo
                 setTextAndSelection(updatedText, updatedSelectionStart, updatedSelectionEnd)
             }
 
-            ViewUtils.notifyAttributeChanged(this, valueProperty, updatedText)
+            ViewUtils.notifyAttributeChanged(owner, valueProperty, updatedText)
 
             callEventCallback(onChangeFunction)
 
-            ViewUtils.invalidateLayout(this)
+            ViewUtils.invalidateLayout(owner)
         }
     }
 
     override fun onSelectionChanged(selStart: Int, selEnd: Int) {
         super.onSelectionChanged(selStart, selEnd)
-
-        ViewUtils.notifyAttributeChanged(this, selectionProperty, intArrayOf(selStart, selEnd))
-
-        callEventCallback(onSelectionChangeFunction)
+        val owner = owner ?: return
+        ValdiTextSelection.notifySelectionChanged(owner, selStart, selEnd)
+        ValdiTextSelection.callSelectionChangeCallback(onSelectionChangeFunction, text ?: "", selStart, selEnd)
     }
 
     override fun onKeyPreIme(keyCode: Int, keyEvent: KeyEvent): Boolean {
         if (keyEvent.keyCode == KeyEvent.KEYCODE_BACK && keyEvent.action == KeyEvent.ACTION_UP) {
-            doUnfocus(UnfocusReason.DismissKeyPress)
+            doUnfocus(ValdiEditText.UnfocusReason.DismissKeyPress)
         }
         return super.onKeyPreIme(keyCode, keyEvent)
     }
@@ -266,6 +389,7 @@ open class ValdiEditText(context: Context) : AppCompatEditText(context), ValdiTo
     override fun setText(text: CharSequence?, type: BufferType?) {
         isSettingTextCount += 1
         try {
+            setTextGeneration += 1
             super.setText(text, type)
         } finally {
             isSettingTextCount -= 1
@@ -273,13 +397,14 @@ open class ValdiEditText(context: Context) : AppCompatEditText(context), ValdiTo
     }
 
     fun setSelectionClamped(start: Int, end: Int) {
-        val lengthClamped = this.text?.length ?: 0
-        val startClamped = Math.max(0, Math.min(lengthClamped, start))
-        val endClamped = Math.max(startClamped, Math.min(lengthClamped, end))
-        setSelection(startClamped, endClamped)
+        ValdiTextSelection.setSelectionClamped(this, start, end)
     }
 
-    override fun setTextAccessibility(text: CharSequence?) {
+    fun setValdiSelection(start: Int, end: Int) {
+        setSelectionClamped(start, end)
+    }
+
+    fun setTextAccessibility(text: CharSequence?) {
         // setText has extra checks to prevent listener callbacks from being called
         // to prevent infinite loops and unexpected side effects.
         // For accessibility reasons, we want all of those side effects.
@@ -288,6 +413,11 @@ open class ValdiEditText(context: Context) : AppCompatEditText(context), ValdiTo
 
     fun setTextAndSelection(attributedText: AttributedText, spannable: Spannable) {
         setAttributedText(attributedText, spannable)
+    }
+
+    fun setTextAndSelection(spannable: Spannable) {
+        attributedText = null
+        setSpannableAndSelection(spannable)
     }
 
     fun setTextAndSelection(value: String, start: Int = selectionStart, end: Int = selectionEnd) {
@@ -322,17 +452,18 @@ open class ValdiEditText(context: Context) : AppCompatEditText(context), ValdiTo
         // Calling setText is expensive so we only call it if the text has changed.
         // If text has not changed then we apply the spans without calling setText.
         // See: https://developer.android.com/develop/ui/views/text-and-emoji/spans#change-internal-attributes
-        if (superText == null || superText.toString() != spannable.toString() || skipSetTextOptimization) {
-            setText(spannable, BufferType.SPANNABLE)
+        // Everything below works off textClamped, not the raw spannable: clampProcessSpannableIfNeeded
+        // is what strips newlines when ignoreNewlines is set and enforces characterLimit. Using
+        // `spannable` here bypassed both for rich text — pasting a newline or over-long text rendered
+        // it verbatim — and left lengthClamped, i.e. the caret bound, as the only place clamping had
+        // any effect.
+        if (superText == null || superText.toString() != textClamped.toString() || skipSetTextOptimization) {
+            setText(textClamped, BufferType.SPANNABLE)
         } else {
-            val newSpans = spannable.getSpans(0, spannable.length, Object::class.java)
+            val newSpans = textClamped.getSpans(0, textClamped.length, Object::class.java)
 
             // When calling `setSpan` we first remove existing spans if their types are present.
-            // We also remove onLayout spans as these can get out of sync when the text changes.
-            superText.getSpans(0, spannable.length, OnLayoutSpan::class.java).forEach { onLayoutSpan ->
-                superText.removeSpan(onLayoutSpan)
-            }
-            superText.getSpans(0, spannable.length, Object::class.java).forEach { span ->
+            superText.getSpans(0, textClamped.length, Object::class.java).forEach { span ->
                 val isInNewSpans = newSpans.find { newSpan ->
                     newSpan::class == span::class
                 }
@@ -345,13 +476,13 @@ open class ValdiEditText(context: Context) : AppCompatEditText(context), ValdiTo
             newSpans.forEach { span ->
                 superText.setSpan(
                     span,
-                    spannable.getSpanStart(span),
-                    spannable.getSpanEnd(span),
-                    spannable.getSpanFlags(span),
+                    textClamped.getSpanStart(span),
+                    textClamped.getSpanEnd(span),
+                    textClamped.getSpanFlags(span),
                 )
             }
         }
-        
+
         val startClamped = Math.max(0, Math.min(lengthClamped, start))
         val endClamped = Math.max(startClamped, Math.min(lengthClamped, end))
         setSelection(startClamped, endClamped)
@@ -370,22 +501,29 @@ open class ValdiEditText(context: Context) : AppCompatEditText(context), ValdiTo
         return value
     }
 
-
     private fun clampProcessSpannableIfNeeded(rawValue: Spannable): Spannable {
-        val value = SpannableStringBuilder(rawValue)
+        val value = safeSpannableStringBuilder(rawValue)
         if (ignoreNewlines) {
             value.replace(Regex("\n"), "")
         }
         val characterLimit = this.characterLimit
         if (characterLimit != null && characterLimit >= 0 && value.length > characterLimit) {
             // TODO(979) check the length based on localized length, not string binary length (emojis, chinese chars, etc)
-            value.delete(characterLimit, value.length);
+            value.delete(characterLimit, value.length)
         }
         return value
     }
 
-    override fun prepareForRecycling() {
-        setText("")
+    private fun safeSpannableStringBuilder(rawValue: CharSequence): SpannableStringBuilder {
+        return try {
+            SpannableStringBuilder(rawValue)
+        } catch (e: IndexOutOfBoundsException) {
+            // The live buffer can expose an inconsistent span array (getSpansRec) mid input-mode
+            // change; degrade to span-less text rather than crash while copying it. Log the degrade
+            // so a prod occurrence is visible instead of silently shipping plain text for rich.
+            logger?.error("Failed to copy attributed spans; degrading to plain text: ${e.message}")
+            SpannableStringBuilder(rawValue.toString())
+        }
     }
 
     fun setCharacterLimit(value: Int?) {
@@ -394,13 +532,43 @@ open class ValdiEditText(context: Context) : AppCompatEditText(context), ValdiTo
     }
 
     fun setIgnoreNewlines(value: Boolean) {
-        ignoreNewlines = value;
+        ignoreNewlines = value
         refreshTextAndSelection()
     }
 
-    protected fun onPressedReturn() {
+    fun onNumberOfLinesChanged() {
+        if (maxLines != Int.MAX_VALUE) {
+            ellipsize = TextUtils.TruncateAt.END
+        } else {
+            ellipsize = null
+        }
+        if (!isValdiEditable) {
+            setTextIsSelectable(isValdiSelectable)
+            keyListener = null
+            isCursorVisible = false
+        }
+    }
+
+    fun allowLineReturns(value: Boolean) {
+        if (value) {
+            setValdiInputType(valdiInputType or InputType.TYPE_TEXT_FLAG_MULTI_LINE)
+            owner?.textViewHelper?.applyCurrentNumberOfLines()
+            setHorizontallyScrolling(false)
+            setIgnoreNewlines(false)
+        } else {
+            setValdiInputType(valdiInputType and InputType.TYPE_TEXT_FLAG_MULTI_LINE.inv())
+            owner?.textViewHelper?.applyCurrentNumberOfLines()
+            setHorizontallyScrolling(false)
+            setIgnoreNewlines(true)
+        }
+    }
+
+    fun onPressedReturn() {
+        if (owner == null) {
+            return
+        }
         if (closesWhenReturnKeyPressed) {
-            doUnfocus(UnfocusReason.ReturnKeyPress)
+            doUnfocus(ValdiEditText.UnfocusReason.ReturnKeyPress)
         }
         callEventCallback(onReturnFunction)
     }
@@ -428,41 +596,55 @@ open class ValdiEditText(context: Context) : AppCompatEditText(context), ValdiTo
     }
 
     fun doFocus() {
+        val owner = owner ?: return
         if (!hasFocus()) {
-            ViewUtils.getKeyboardManager(this)?.requestFocusAndShowKeyboard(this)
+            ViewUtils.getKeyboardManager(owner)?.requestFocusAndShowKeyboard(this)
         }
     }
 
-    fun doUnfocus(reason: UnfocusReason) {
+    fun doUnfocus(reason: ValdiEditText.UnfocusReason) {
+        // Resolve the root from the owning node view: the Valdi context (and thus the
+        // ValdiRootView) is attached to the node, not to this inner backing input, so
+        // passing `this` would no-op and leave stale focus that blocks re-focus on reuse.
+        val owner = owner ?: return
         if (hasFocus()) {
             lastUnfocusReason = reason
-            ViewUtils.resetFocusToRootViewOf(this)
+            ViewUtils.resetFocusToRootViewOf(owner)
         }
+    }
+
+    override fun allowsSameViewGestureRecognizers(): Boolean {
+        return allowsSameViewGestureRecognizersWhenNotEditable && !isValdiEditable
     }
 
     override fun processTouchEvent(event: MotionEvent): ValdiTouchEventResult {
+        if (allowsSameViewGestureRecognizers()) {
+            this.dispatchTouchEvent(event)
+            return ValdiTouchEventResult.IgnoreEvent
+        }
+
         // If the view is not focuseable, we deny it any kind of events
         if (!isFocusable || !isFocusableInTouchMode) {
             return ValdiTouchEventResult.IgnoreEvent
         }
         // Tap ups will always be swallowed to match iOS behaviour
-        if (event.getActionMasked() == MotionEvent.ACTION_UP) {
-            this.dispatchTouchEvent(event);
+        if (event.actionMasked == MotionEvent.ACTION_UP) {
+            this.dispatchTouchEvent(event)
             return ValdiTouchEventResult.ConsumeEventAndCancelOtherGestures
         }
         // Read the input's state before the event
-        val beforeFocused = this.isFocused()
+        val beforeFocused = this.isFocused
         val beforeSelectionStart = this.selectionStart
         val beforeSelectionEnd = this.selectionEnd
         val beforeText = this.text
         // Dispatch the event to the actual android view
-        var eventIsUsedByDispatch = this.dispatchTouchEvent(event)
+        val eventIsUsedByDispatch = this.dispatchTouchEvent(event)
         // If the event was ignored by the underlying view, don't swallow it
         if (!eventIsUsedByDispatch) {
             return ValdiTouchEventResult.IgnoreEvent
         }
         // If the intput state has changed during the event, we want to cancel all other valdi gestures
-        val afterFocused = this.isFocused()
+        val afterFocused = this.isFocused
         if (afterFocused != beforeFocused) {
             return ValdiTouchEventResult.ConsumeEventAndCancelOtherGestures
         }
@@ -486,11 +668,8 @@ open class ValdiEditText(context: Context) : AppCompatEditText(context), ValdiTo
         private val focusedAttribute = InternedString.create("focused")
         private val valueProperty = InternedString.create("value")
         private val textProperty = InternedString.create("text")
-        private val selectionProperty = InternedString.create("selection")
         private val selectionStartProperty = InternedString.create("selectionStart")
         private val selectionEndProperty = InternedString.create("selectionEnd")
         private val reasonProperty = InternedString.create("reason")
-
-        const val EXPECTED_SELECTION_DATA_SIZE = 2
     }
 }

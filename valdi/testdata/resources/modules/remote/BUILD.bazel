@@ -8,12 +8,12 @@ valdi_module(
     ]),
     android_output_target = "release",
     downloadable_assets = True,
+    downloadable_sources = True,
     ios_module_name = "SCCRemote",
     ios_output_target = "release",
     legacy_vue_srcs = glob([
         "src/**/*.vue",
     ]),
-    module_yaml = "module.yaml",
     prepared_upload_artifact_name = "remote.valdiarchive",
     res = glob([
         "res/**/*.png",

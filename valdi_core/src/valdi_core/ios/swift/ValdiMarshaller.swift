@@ -378,6 +378,9 @@ open class ValdiMarshaller {
     }
 
     public func getGenericObject<T>(_ index: Int) throws -> T {
+        if let marshallableType = T.self as? ValdiMarshallableObject.Type {
+            return try marshallableType.init(from: self, at: index) as! T
+        }
         return try getObject(index)
     }
 
@@ -399,6 +402,8 @@ open class ValdiMarshaller {
             return try enumType.init(from: self, at: index) as! T
         case let marshallableType as ValdiMarshallableObject.Type:
             return try marshallableType.init(from: self, at: index) as! T
+        case let arrayType as ValdiMarshallableArray.Type:
+            return try arrayType.init(from: self, at: index) as! T
         case let objcType as SCValdiMarshallable.Type:
             return SCValdiMarshallableObjectUnmarshall(OpaquePointer(marshallerCpp), index, objcType) as! T
         default:

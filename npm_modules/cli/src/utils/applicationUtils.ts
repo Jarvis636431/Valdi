@@ -18,11 +18,14 @@ import {
   IOS_BUILD_FLAGS,
   IOS_DEVICE_BUILD_FLAGS,
   IOS_EXPORTED_LIBRARY_TAG,
+  LINUX_BAZEL_APPLICATION_TAG,
+  LINUX_BUILD_FLAGS,
   MACOS_BAZEL_APPLICATION_TAG,
   MACOS_BUILD_FLAGS,
   PLATFORM,
   RELEASE_BUILD_FLAGS,
   VALID_PLATFORMS,
+  androidPlatformsFlag,
 } from '../core/constants';
 import { CliError } from '../core/errors';
 import type { BazelClient } from './BazelClient';
@@ -118,6 +121,9 @@ export function getApplicationTargetTagForPlatform(platform: PLATFORM): string {
     case PLATFORM.MACOS: {
       return MACOS_BAZEL_APPLICATION_TAG;
     }
+    case PLATFORM.LINUX: {
+      return LINUX_BAZEL_APPLICATION_TAG;
+    }
     case PLATFORM.CLI: {
       return CLI_BAZEL_APPLICATION_TAG;
     }
@@ -134,6 +140,9 @@ export function getExportedLibraryTargetTagForPlatform(platform: PLATFORM): stri
     }
     case PLATFORM.MACOS: {
       throw new CliError('Exported library is not yet supported for macOS platform');
+    }
+    case PLATFORM.LINUX: {
+      throw new CliError('Exported library is not yet supported for Linux platform');
     }
     case PLATFORM.CLI: {
       throw new CliError('Exported library is not supported for CLI platform');
@@ -152,6 +161,9 @@ export function applicationExtensionForPlatform(platform: PLATFORM): string {
     case PLATFORM.MACOS: {
       return '.zip';
     }
+    case PLATFORM.LINUX: {
+      return '';
+    }
     case PLATFORM.CLI: {
       return '';
     }
@@ -167,6 +179,9 @@ export function exportedLibraryExtensionForPlatform(platform: PLATFORM): string 
       return '.aar';
     }
     case PLATFORM.MACOS: {
+      return '.zip';
+    }
+    case PLATFORM.LINUX: {
       return '.zip';
     }
     case PLATFORM.CLI: {
@@ -259,6 +274,8 @@ export function resolveBazelBuildArgs(
     allArgs.push(...CLI_BUILD_FLAGS);
   } else if (platform === PLATFORM.MACOS) {
     allArgs.push(...MACOS_BUILD_FLAGS);
+  } else if (platform === PLATFORM.LINUX) {
+    allArgs.push(...LINUX_BUILD_FLAGS);
   }
 
   if (platform === PLATFORM.ANDROID) {
@@ -266,6 +283,10 @@ export function resolveBazelBuildArgs(
 
     for (const architecture of architectures) {
       allArgs.push(...androidBuildFlagsForArchitecture(architecture));
+    }
+
+    if (architectures.length > 0) {
+      allArgs.push(androidPlatformsFlag(architectures));
     }
   }
 

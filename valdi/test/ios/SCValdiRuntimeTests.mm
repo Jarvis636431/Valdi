@@ -11,6 +11,11 @@
 
 #import "valdi/ios/SCValdiRuntimeManager.h"
 #import "valdi/ios/Views/SCValdiLabel.h"
+#import "valdi/ios/Views/SCValdiTextField.h"
+#import "valdi/ios/Text/NSAttributedString+Valdi.h"
+#import "valdi/ios/Text/SCValdiFont.h"
+#import "valdi/ios/Text/SCValdiFontAttributes.h"
+#import "valdi/ios/Text/SCValdiCustomUnderlineStyle.h"
 #import "valdi/ios/Gestures/SCValdiGestureRecognizers.h"
 #import "valdi/ios/Utils/SCValdiImageFilter.h"
 #import "valdi/runtime/Utils/AsyncGroup.hpp"
@@ -18,6 +23,7 @@
 #import "valdi_core/cpp/Threading/GCDDispatchQueue.hpp"
 #import "valdi_core/SCValdiScrollView.h"
 #import "valdi_core/SCValdiRootView.h"
+#import "valdi_core/UIView+ValdiBase.h"
 
 #import <SCCValdiTest/SCCValdiTest.h>
 #import <SCCValdiTestTypes/SCCValdiTestTypes.h>
@@ -25,6 +31,11 @@
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wgnu-zero-variadic-macro-arguments"
 #pragma clang diagnostic ignored "-Wgnu-statement-expression"
+
+@interface SCValdiRuntimeManager (TestExposure)
+- (void)_willEnterForeground;
+- (void)_didEnterBackground;
+@end
 
 @interface SCCValdiTestListenerImpl: NSObject<SCCValdiTestListener>
 
@@ -40,6 +51,14 @@
         self.onRenderCallback();
     }
 }
+
+@end
+
+@interface SCValdiTextField (SCValdiRuntimeTests)
+
+- (void)valdi_setFontAttributes:(SCValdiFontAttributes *)fontAttributes;
+- (void)valdi_setValue:(id)textValue;
+- (BOOL)_updateAttributedTextIfNeeded;
 
 @end
 
@@ -85,6 +104,128 @@
 - (void)tearDown
 {
     self.runtimeManager = nil;
+}
+
+- (void)testRelativeLineHeightScalesNaturalLineHeightViaMultiple
+{
+    UIFont *font = [UIFont systemFontOfSize:14];
+    CGFloat multiple = 1.5;
+    SCValdiFont *valdiFont = [[SCValdiFont alloc] initWithFont:font
+                                                     textStyle:nil
+                                                       maxSize:0
+                                                   fontManager:nil];
+    SCValdiFontAttributes *fontAttributes = [NSAttributedString fontAttributesWithFont:valdiFont
+                                                                                 color:nil
+                                                                             textAlign:nil
+                                                                            lineHeight:@(multiple)
+                                                                  lineHeightAbsolute:nil
+                                                                        textDecoration:nil
+                                                                         letterSpacing:nil
+                                                                         numberOfLines:@1
+                                                                          textOverflow:nil];
+
+    NSDictionary<NSAttributedStringKey, id> *attributes = [fontAttributes resolveAttributesWithIsRightToLeft:NO
+                                                                                              traitCollection:nil];
+    NSParagraphStyle *paragraphStyle = attributes[NSParagraphStyleAttributeName];
+    NSNumber *baselineOffset = attributes[NSBaselineOffsetAttributeName];
+    NSAttributedString *attributedString = [[NSAttributedString alloc] initWithString:@"Detroit Pistons"
+                                                                           attributes:attributes];
+    CGRect boundingRect = [attributedString boundingRectWithSize:CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)
+                                                         options:NSStringDrawingUsesLineFragmentOrigin
+                                                         context:nil];
+
+    // A relative lineHeight is a multiple of the font's natural line height (matching the C++ layout
+    // TextLayoutLineHeight::getLineMetrics, which scales the font's ascent/descent, and the pre-reland
+    // behavior). It is applied as lineHeightMultiple, not an absolute minimum/maximumLineHeight;
+    // resolving it against font.pointSize instead clamped the line box below the glyphs and clipped
+    // Search captions (SEARCH-48847).
+    XCTAssertEqualWithAccuracy(paragraphStyle.lineHeightMultiple, multiple, 0.001);
+    XCTAssertEqualWithAccuracy(paragraphStyle.minimumLineHeight, 0, 0.001);
+    XCTAssertEqualWithAccuracy(paragraphStyle.maximumLineHeight, 0, 0.001);
+    XCTAssertNil(baselineOffset);
+    XCTAssertEqualWithAccuracy(CGRectGetHeight(boundingRect), font.lineHeight * multiple, 0.5);
+}
+
+- (void)testRelativeLineHeightDoesNotCompressBelowNaturalWithoutBaselineOffset
+{
+    UIFont *font = [UIFont systemFontOfSize:48 weight:UIFontWeightMedium];
+    // The value coreui Search captions use — a sub-1 multiple. It must scale the natural line height
+    // (0.9x), never resolve to font.pointSize and add a negative baseline offset that clips the text.
+    CGFloat multiple = 0.9;
+    SCValdiFont *valdiFont = [[SCValdiFont alloc] initWithFont:font
+                                                     textStyle:nil
+                                                       maxSize:0
+                                                   fontManager:nil];
+    SCValdiFontAttributes *fontAttributes = [NSAttributedString fontAttributesWithFont:valdiFont
+                                                                                 color:nil
+                                                                             textAlign:nil
+                                                                            lineHeight:@(multiple)
+                                                                  lineHeightAbsolute:nil
+                                                                        textDecoration:nil
+                                                                         letterSpacing:nil
+                                                                         numberOfLines:@1
+                                                                          textOverflow:nil];
+
+    NSDictionary<NSAttributedStringKey, id> *attributes = [fontAttributes resolveAttributesWithIsRightToLeft:NO
+                                                                                              traitCollection:nil];
+    NSParagraphStyle *paragraphStyle = attributes[NSParagraphStyleAttributeName];
+    NSNumber *baselineOffset = attributes[NSBaselineOffsetAttributeName];
+
+    XCTAssertEqualWithAccuracy(paragraphStyle.lineHeightMultiple, multiple, 0.001);
+    XCTAssertEqualWithAccuracy(paragraphStyle.minimumLineHeight, 0, 0.001);
+    XCTAssertEqualWithAccuracy(paragraphStyle.maximumLineHeight, 0, 0.001);
+    XCTAssertNil(baselineOffset);
+}
+
+- (void)testFontAttributesCenterExplicitCompressedLineHeight
+{
+    UIFont *font = [UIFont systemFontOfSize:48 weight:UIFontWeightMedium];
+    CGFloat lineHeight = 48;
+    SCValdiFont *valdiFont = [[SCValdiFont alloc] initWithFont:font
+                                                     textStyle:nil
+                                                       maxSize:0
+                                                   fontManager:nil];
+    SCValdiFontAttributes *fontAttributes = [NSAttributedString fontAttributesWithFont:valdiFont
+                                                                                 color:nil
+                                                                             textAlign:nil
+                                                                            lineHeight:nil
+                                                                  lineHeightAbsolute:@(lineHeight)
+                                                                        textDecoration:nil
+                                                                         letterSpacing:nil
+                                                                         numberOfLines:@1
+                                                                          textOverflow:nil];
+
+    NSDictionary<NSAttributedStringKey, id> *attributes = [fontAttributes resolveAttributesWithIsRightToLeft:NO
+                                                                                              traitCollection:nil];
+    NSNumber *baselineOffset = attributes[NSBaselineOffsetAttributeName];
+
+    XCTAssertEqualWithAccuracy(baselineOffset.doubleValue, (lineHeight - font.lineHeight) / 2.0, 0.001);
+    XCTAssertLessThan(baselineOffset.doubleValue, 0);
+}
+
+- (void)testTextFieldPreservesExplicitTextAlignment
+{
+    SCValdiTextField *textField = [SCValdiTextField new];
+    UIFont *font = [UIFont systemFontOfSize:48 weight:UIFontWeightMedium];
+    SCValdiFont *valdiFont = [[SCValdiFont alloc] initWithFont:font
+                                                     textStyle:nil
+                                                       maxSize:0
+                                                   fontManager:nil];
+    SCValdiFontAttributes *fontAttributes = [NSAttributedString fontAttributesWithFont:valdiFont
+                                                                                 color:nil
+                                                                             textAlign:@"right"
+                                                                            lineHeight:nil
+                                                                  lineHeightAbsolute:nil
+                                                                        textDecoration:nil
+                                                                         letterSpacing:nil
+                                                                         numberOfLines:@1
+                                                                          textOverflow:nil];
+
+    [textField valdi_setFontAttributes:fontAttributes];
+    [textField valdi_setValue:@"4"];
+    [textField _updateAttributedTextIfNeeded];
+
+    XCTAssertEqual(textField.textAlignment, NSTextAlignmentRight);
 }
 
 - (BOOL)_simulateTapOnView:(UIView *)view atLocation:(CGPoint)location
@@ -267,21 +408,21 @@
     rootView.frame = CGRectMake(0, 0, 400, 800);
     [rootView layoutSubviews];
 
-    [self _simulateTapOnView:rootView atLocation:CGPointMake(196, 68)];
+    [self _simulateTapOnView:rootView atLocation:CGPointMake(196, 62)];
 
     @synchronized (tappedCards) {
         XCTAssertEqual(1, tappedCards.count);
         XCTAssertEqualObjects(@(0), tappedCards[0]);
     }
 
-    [self _simulateTapOnView:rootView atLocation:CGPointMake(196, 88)];
+    [self _simulateTapOnView:rootView atLocation:CGPointMake(196, 79)];
 
     @synchronized (tappedCards) {
         XCTAssertEqual(2, tappedCards.count);
         XCTAssertEqualObjects(@(1), tappedCards[1]);
     }
 
-    [self _simulateTapOnView:rootView atLocation:CGPointMake(196, 107)];
+    [self _simulateTapOnView:rootView atLocation:CGPointMake(196, 97)];
 
     @synchronized (tappedCards) {
         XCTAssertEqual(3, tappedCards.count);
@@ -314,22 +455,22 @@
 
         size = [context measureLayoutWithMaxSize:CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX) direction:SCValdiLayoutDirectionLTR];
 
-        XCTAssertEqualWithAccuracy(118.67, size.width, 0.5);
-        XCTAssertEqualWithAccuracy(132.0, size.height, 0.5);
+        XCTAssertEqualWithAccuracy(108.67, size.width, 0.5);
+        XCTAssertEqualWithAccuracy(122.33, size.height, 0.5);
 
         size = [context measureLayoutWithMaxSize:CGSizeMake(500, CGFLOAT_MAX) direction:SCValdiLayoutDirectionLTR];
 
-        XCTAssertEqualWithAccuracy(118.67, size.width, 0.5);
-        XCTAssertEqualWithAccuracy(132.0, size.height, 0.5);
+        XCTAssertEqualWithAccuracy(108.67, size.width, 0.5);
+        XCTAssertEqualWithAccuracy(122.33, size.height, 0.5);
 
         size = [context measureLayoutWithMaxSize:CGSizeMake(80, CGFLOAT_MAX) direction:SCValdiLayoutDirectionLTR];
 
-        XCTAssertEqualWithAccuracy(77.67, size.width, 0.5);
-        XCTAssertEqualWithAccuracy(151.0, size.height, 0.5);
+        XCTAssertEqualWithAccuracy(72.67, size.width, 0.5);
+        XCTAssertEqualWithAccuracy(139.0, size.height, 0.5);
 
         size = [context measureLayoutWithMaxSize:CGSizeMake(80, 100) direction:SCValdiLayoutDirectionLTR];
 
-        XCTAssertEqualWithAccuracy(77.67, size.width, 0.5);
+        XCTAssertEqualWithAccuracy(75.67, size.width, 0.5);
         XCTAssertEqualWithAccuracy(100.0, size.height, 0.5);
     }
 
@@ -338,18 +479,18 @@
 
         size = [context measureLayoutWithMaxSize:CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX) direction:SCValdiLayoutDirectionLTR];
 
-        XCTAssertEqualWithAccuracy(118.67, size.width, 0.5);
-        XCTAssertEqualWithAccuracy(132.0, size.height, 0.5);
+        XCTAssertEqualWithAccuracy(108.67, size.width, 0.5);
+        XCTAssertEqualWithAccuracy(122.33, size.height, 0.5);
 
         size = [context measureLayoutWithMaxSize:CGSizeMake(500, CGFLOAT_MAX) direction:SCValdiLayoutDirectionLTR];
 
         XCTAssertEqualWithAccuracy(500.0, size.width, 0.5);
-        XCTAssertEqualWithAccuracy(132.0, size.height, 0.5);
+        XCTAssertEqualWithAccuracy(122.33, size.height, 0.5);
 
         size = [context measureLayoutWithMaxSize:CGSizeMake(80, CGFLOAT_MAX) direction:SCValdiLayoutDirectionLTR];
 
         XCTAssertEqualWithAccuracy(80.0, size.width, 0.5);
-        XCTAssertEqualWithAccuracy(151.0, size.height, 0.5);
+        XCTAssertEqualWithAccuracy(139.0, size.height, 0.5);
 
         size = [context measureLayoutWithMaxSize:CGSizeMake(80, 100) direction:SCValdiLayoutDirectionLTR];
 
@@ -384,6 +525,65 @@
     [titleView layoutIfNeeded];
 
     XCTAssertEqualObjects(@"Welcome to Unit Test!", titleView.text);
+}
+
+- (void)testCustomUnderlineStyleParser
+{
+    NSError *error = nil;
+    SCValdiCustomUnderlineStyle *style = [SCValdiCustomUnderlineStyle styleWithString:@"1 1 1 -2" error:&error];
+
+    XCTAssertNotNil(style);
+    XCTAssertNil(error);
+    XCTAssertEqualWithAccuracy(1.0, style.height, 0.0001);
+    XCTAssertEqualWithAccuracy(1.0, style.onWidth, 0.0001);
+    XCTAssertEqualWithAccuracy(1.0, style.offWidth, 0.0001);
+    XCTAssertEqualWithAccuracy(-2.0, style.offset, 0.0001);
+    XCTAssertTrue(style.patterned);
+
+    style = [SCValdiCustomUnderlineStyle styleWithString:@"1 0 0 -2" error:&error];
+    XCTAssertNotNil(style);
+    XCTAssertFalse(style.patterned);
+
+    XCTAssertNil([SCValdiCustomUnderlineStyle styleWithString:@"1 1 1 -2 3" error:&error]);
+    XCTAssertNotNil(error);
+    XCTAssertNil([SCValdiCustomUnderlineStyle styleWithString:@"0 1 1 -2" error:&error]);
+    XCTAssertNotNil(error);
+    XCTAssertNil([SCValdiCustomUnderlineStyle styleWithString:@"1 0 1 -2" error:&error]);
+    XCTAssertNotNil(error);
+    XCTAssertNil([SCValdiCustomUnderlineStyle styleWithString:@"1 -1 1 -2" error:&error]);
+    XCTAssertNotNil(error);
+    XCTAssertNil([SCValdiCustomUnderlineStyle styleWithString:@"1 nope 1 -2" error:&error]);
+    XCTAssertNotNil(error);
+}
+
+- (void)testCanSetCustomUnderlineStyleThroughViewNode
+{
+    __block SCCValdiTestIntegrationTests *rootView;
+    [self getRuntimeWithBlock:^(id<SCValdiRuntimeProtocol> runtime) {
+        SCCValdiTestViewModel *viewModel = [[SCCValdiTestViewModel alloc] initWithHeaderTitle:@"Hello World!" scrollable:NO entries:@[]];
+        SCCValdiTestContext *componentContext = [[SCCValdiTestContext alloc] initWithListener:[SCCValdiTestListenerImpl new] onTap:^(double index) {}];
+        rootView = [[SCCValdiTestIntegrationTests alloc] initWithViewModel:viewModel componentContext:componentContext runtime:self.runtime];
+    }];
+
+    [rootView.valdiContext waitUntilRenderCompletedSyncWithFlush:YES];
+
+    rootView.frame = CGRectMake(0, 0, 400, 800);
+    [rootView layoutIfNeeded];
+
+    SCValdiLabel *titleView = [rootView.subviews firstObject];
+    XCTAssertNotNil(titleView);
+    XCTAssertEqual([SCValdiLabel class], [titleView class]);
+
+    [titleView.valdiViewNode setValue:@"1 1 1 -2" forValdiAttribute:@"customUnderlineStyle"];
+    [titleView layoutIfNeeded];
+
+    SCValdiCustomUnderlineStyle *style = [titleView valueForKey:@"customUnderlineStyle"];
+    XCTAssertNotNil(style);
+    XCTAssertEqual([SCValdiCustomUnderlineStyle class], [style class]);
+    XCTAssertEqualWithAccuracy(1.0, style.height, 0.0001);
+    XCTAssertEqualWithAccuracy(1.0, style.onWidth, 0.0001);
+    XCTAssertEqualWithAccuracy(1.0, style.offWidth, 0.0001);
+    XCTAssertEqualWithAccuracy(-2.0, style.offset, 0.0001);
 }
 
 - (void)testDestroysViewOnDealloc
@@ -639,6 +839,72 @@
     });
 
     [self waitForExpectations:@[expectation] timeout:5.0];
+}
+
+- (void)testPrepareForPoolReuseResetsTransform
+{
+    // valdi_prepareForPoolReuse is called unconditionally by the pool infrastructure
+    // on every recycled view. Verify it resets a stale CALayer transform — the
+    // scenario that occurs when a transform animation is cancelled mid-flight:
+    // the Valdi animation system sets the model value to the target before the
+    // CAAnimation starts, so cancellation snaps the layer to that model value.
+    UIView *view = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 200, 44)];
+    view.layer.transform = CATransform3DMakeTranslation(-216, 0, 0);
+    XCTAssertFalse(CATransform3DIsIdentity(view.layer.transform));
+
+    [view valdi_prepareForPoolReuse];
+
+    XCTAssertTrue(CATransform3DIsIdentity(view.layer.transform));
+}
+
+- (void)testPrepareForPoolReusePreservesNormalAnimations
+{
+    // Normal active animations (visible in animationKeys) are left for
+    // willEnqueueViewToPool to handle via its dispatch_async deferral path.
+    UIView *view = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 200, 44)];
+    CABasicAnimation *anim = [CABasicAnimation animationWithKeyPath:@"transform"];
+    anim.toValue = [NSValue valueWithCATransform3D:CATransform3DMakeTranslation(-216, 0, 0)];
+    anim.duration = 5.0;
+    [view.layer addAnimation:anim forKey:@"transform"];
+    XCTAssertGreaterThan(view.layer.animationKeys.count, 0u);
+
+    [view valdi_prepareForPoolReuse];
+
+    XCTAssertGreaterThan(view.layer.animationKeys.count, 0u);
+    XCTAssertTrue(CATransform3DIsIdentity(view.layer.transform));
+}
+
+- (void)testLabelAllowsPoolReentry
+{
+    SCValdiLabel *label = [[SCValdiLabel alloc] initWithFrame:CGRectMake(0, 0, 200, 44)];
+    XCTAssertTrue([label willEnqueueIntoValdiPool]);
+}
+
+- (void)testSystemForegroundNotificationTriggersResume
+{
+    // Force initialization so notification observers are registered.
+    (void)self.runtimeManager.mainRuntime;
+
+    id partialMock = OCMPartialMock(self.runtimeManager);
+    OCMExpect([partialMock _willEnterForeground]);
+
+    [[NSNotificationCenter defaultCenter] postNotificationName:UIApplicationWillEnterForegroundNotification object:nil];
+
+    OCMVerifyAll(partialMock);
+    [partialMock stopMocking];
+}
+
+- (void)testSystemBackgroundNotificationTriggersPause
+{
+    (void)self.runtimeManager.mainRuntime;
+
+    id partialMock = OCMPartialMock(self.runtimeManager);
+    OCMExpect([partialMock _didEnterBackground]);
+
+    [[NSNotificationCenter defaultCenter] postNotificationName:UIApplicationDidEnterBackgroundNotification object:nil];
+
+    OCMVerifyAll(partialMock);
+    [partialMock stopMocking];
 }
 
 @end

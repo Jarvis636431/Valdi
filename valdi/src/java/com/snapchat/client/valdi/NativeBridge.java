@@ -76,6 +76,10 @@ public class NativeBridge {
 
     public static native String getViewClassName(long viewNodeHandle);
 
+    public static native Object getStoredObjectForViewNode(long viewNodeHandle, long key);
+
+    public static native void setStoredObjectForViewNode(long viewNodeHandle, long key, Object object);
+
     public static native void callJSFunction(long runtimeHandle, long contextHandle, String functionName, Object[] parameters);
 
     public static native Object getViewInContextForId(long contextHandle, String viewId);
@@ -102,6 +106,7 @@ public class NativeBridge {
     public static native void enqueueWorkerTask(long runtimeManagerHandle, Object runnable);
 
     public static native void performCallback(long nativePayloadHandle);
+    public static native void discardCallback(long nativePayloadHandle);
 
     public static native void deleteNativeHandle(long actionHandle);
     public static native void releaseNativeRef(long nativeHandle);
@@ -165,6 +170,14 @@ public class NativeBridge {
     public static native void valueChangedForAttribute(long runtimeHandle, long viewNodeHandle, long attributePtr, Object value);
 
     public static native void setValueForAttribute(long viewNodeHandle, String attribute, Object value, boolean keepAsOverride);
+
+    public static native void setInlineTextAnimationAttributesForViewNode(
+        long viewNodeHandle,
+        boolean hasOpacity,
+        double opacity,
+        boolean hasTransform,
+        double translationY,
+        double scale);
 
     public static native Object getValueForAttribute(long viewNodeHandle, String attribute);
 
@@ -238,6 +251,10 @@ public class NativeBridge {
     public static native void stopProfiling(long runtimeHandle, ValdiFunction completion);
 
     public static native Object wrapAndroidBitmap(Object androidBitmap);
+
+    public static native Object rasterizeSVG(byte[] svgData, int preferredWidth, int preferredHeight, float displayScale);
+
+    public static native Object rasterizeSVGFromFilePath(String filePath, float displayScale);
 
     public static native long getSnapDrawingRuntimeHandle(long runtimeManagerHandle);
     public static native long createSnapDrawingRoot(long snapDrawingRuntimeHandle, boolean disallowSynchronousDraw);

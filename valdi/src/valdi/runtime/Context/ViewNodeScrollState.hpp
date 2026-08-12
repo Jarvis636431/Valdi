@@ -7,8 +7,9 @@
 
 #pragma once
 
-#include "valdi/runtime/Views/Frame.hpp"
+#include "valdi/runtime/Context/RawViewNodeId.hpp"
 #include "valdi_core/cpp/Utils/ValueFunction.hpp"
+#include "valdi_core/cpp/Views/Frame.hpp"
 
 #include <optional>
 
@@ -107,6 +108,40 @@ public:
     void setMaintainScrollAnchor(bool maintain);
     bool getMaintainScrollAnchor() const;
 
+    // Preserve scroll position across content-size growth. See ViewNodeScrollState.
+    void setPreserveScrollPosition(bool preserve);
+    bool getPreserveScrollPosition() const;
+
+    // Native sticky headers: opt-in per-scroll flag. When true, ViewNode::updateStickyHeaders
+    // repositions any descendant with stickyPosition != 0 inside the native scroll pass,
+    // skipping the JS round-trip that lags the current JS-side sticky implementation.
+    void setNativeStickyEnabled(bool enabled);
+    bool getNativeStickyEnabled() const;
+
+    // Pixels of visual overhang above sticky headers. Extends the effective header
+    // height in the sticky clamp so a header rendering a bar above its yoga bounds
+    // (SectionList.stickyCover) stops sliding before the next section arrives.
+    void setNativeStickyCover(float cover);
+    float getNativeStickyCover() const;
+
+    // Pixels below scroll viewport top where sticky headers pin. Matches CSS
+    // `position: sticky; top: N`. Shifts the pin position down for consumers where
+    // a floating page header has visual footprint (gradient/shadow/animated height)
+    // extending below its Yoga bounds.
+    void setNativeStickyOffset(float offset);
+    float getNativeStickyOffset() const;
+
+    // Anchor memory for preserveScrollPosition: the id of the first on-screen child and its
+    // screen position (= absolute Y minus content offset) at record time. The anchor is refreshed
+    // on every scroll event and layout pass (so it never goes stale), and updateScrollState pins
+    // it back to this screen position when the viewport is stationary -- which survives the offset
+    // being clamped or scrolled between record and apply.
+    bool hasPreserveAnchor() const;
+    RawViewNodeId getPreserveAnchorId() const;
+    float getPreserveAnchorScreenPos() const;
+    void setPreserveAnchor(RawViewNodeId id, float screenPos);
+    void clearPreserveAnchor();
+
 private:
     Point _directionAgnosticContentOffset;
     Point _directionAgnosticUnclampedContentOffset;
@@ -128,6 +163,13 @@ private:
     bool _inScrollMode = false;
     bool _isHorizontal = false;
     bool _maintainScrollAnchor = false;
+    bool _preserveScrollPosition = false;
+    bool _hasPreserveAnchor = false;
+    bool _nativeStickyEnabled = false;
+    float _nativeStickyCover = 0.0f;
+    float _nativeStickyOffset = 0.0f;
+    RawViewNodeId _preserveAnchorId = 0;
+    float _preserveAnchorScreenPos = 0.0f;
 
     Ref<ValueFunction> _onScrollCallback;
     Ref<ValueFunction> _onScrollEndCallback;

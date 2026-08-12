@@ -75,6 +75,7 @@ class BundleManager {
                                                     iosLanguage: IOSLanguage.objc,
                                                     iosClassPrefix: nil,
                                                     androidClassPath: nil,
+                                                    androidExportStrings: true,
                                                     cppClassPrefix: nil,
                                                     iosCodegenEnabled: false,
                                                     androidCodegenEnabled: false,
@@ -82,6 +83,7 @@ class BundleManager {
                                                     disableCodeCoverage: false,
                                                     singleFileCodegen: false,
                                                     compilationModeConfig: CompilationModeConfig(js: nil, jsBytecode: nil, native: nil),
+                                                    compilationModeExplicit: false,
                                                     iosOutputTarget: .releaseReady,
                                                     iosGeneratedContextFactories: [],
                                                     androidOutputTarget: .releaseReady,
@@ -182,7 +184,12 @@ class BundleManager {
             loadingBundleURLs.remove(bundleURL)
         }
 
-        let resolvedBundleDir = try bundleURL.deletingLastPathComponent().resolvingSymlink()
+        // Don't fail on symlink resolution- bundleUrl is constructed as ${exec_root}/${module_path}/module.yaml, where module_path
+        // is the relative path to the module directory from the source root. Historically, a module.yaml with the module declaration
+        // lived there, but now this file is a generated bazel file but this logic is still used to determine the location of the bundle.
+        // For bundle dependencies (no source available) the symlink resolution will fail but thats fine since the original path will
+        // be the valid path under the exec_root output tree. For the source module this call will resolve to the bundle source directory.
+        let resolvedBundleDir = (try? bundleURL.deletingLastPathComponent().resolvingSymlink()) ?? bundleURL.deletingLastPathComponent()
 
         let configData: String
         do {
@@ -297,6 +304,7 @@ class BundleManager {
         }
 
         let androidClassPath = androidConfig?["class_path"]?.string
+        let androidExportStrings = androidConfig?["export_strings"]?.bool ?? true
 
         let dependencyStrings = config["dependencies"]?.array().compactMap({ $0.string }) ?? [String]()
         var dependencies = try resolveDependencies(ofModule: bundleName,
@@ -347,6 +355,7 @@ class BundleManager {
                                                         iosLanguage: iosLanguage,
                                                         iosClassPrefix: iosClassPrefix,
                                                         androidClassPath: androidClassPath,
+                                                        androidExportStrings: androidExportStrings,
                                                         cppClassPrefix: cppClassPrefix,
                                                         iosCodegenEnabled: iosCodegenEnabled,
                                                         androidCodegenEnabled: androidCodegenEnabled,
@@ -354,6 +363,7 @@ class BundleManager {
                                                         disableCodeCoverage: disableCodeCoverage,
                                                         singleFileCodegen: singleFileCodegen,
                                                         compilationModeConfig: compilationModeConfig,
+                                                        compilationModeExplicit: config["compilation_mode"] != nil,
                                                         iosOutputTarget: iosOutputTarget,
                                                         iosGeneratedContextFactories: iosGeneratedContextFactories,
                                                         androidOutputTarget: androidOutputTarget,
@@ -422,38 +432,12 @@ class BundleManager {
             return bundleInfo
         }
 
-        let bundleURL: URL
-        let bundleFile: File
-        if let registeredBundle = self.bundleURLByName[bundleName] {
-            // Bundle registered via explicit_input_list.json in [ValdiCompilerRunner.swift]
-            bundleURL = registeredBundle.url
-            bundleFile = registeredBundle.file
-        } else {
-            // Infer based on name from the base directory
-            let resolvedBundlePath = BundleManager.resolveBundleName(bundleName: bundleName)
-
-            // List of directories to look for modules in
-            var possibleBundleURL: URL? = nil
-
-            for urlPrefix in self.baseDirURLs.reversed() {
-                let maybeBundleURL = urlPrefix.appendingPathComponent(resolvedBundlePath).appendingPathComponent(Files.moduleYaml)
-
-                if FileManager.default.fileExists(atPath: maybeBundleURL.path) {
-                    possibleBundleURL = maybeBundleURL
-                    break
-                }
-            }
-
-            if let possibleBundleURL = possibleBundleURL {
-                bundleURL = possibleBundleURL
-            } else {
-                return rootBundle
-            }
-
-            bundleFile = .url(bundleURL)
+        guard let registeredBundle = self.bundleURLByName[bundleName] else {
+            // Bundles must be registered via explicit_input_list.json in [ValdiCompilerRunner.swift]
+            throw CompilerError("Module '\(bundleName)' was not present in explicit_input_list.json file")
         }
 
-        return try loadBundle(bundleName: bundleName, bundleURL: bundleURL, bundleFile: bundleFile)
+        return try loadBundle(bundleName: bundleName, bundleURL: registeredBundle.url, bundleFile: registeredBundle.file)
     }
 
     private func resolveBundleInfo(itemURL: URL, dirURL: URL) throws -> CompilationItem.BundleInfo {

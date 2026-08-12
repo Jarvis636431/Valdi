@@ -86,6 +86,19 @@ interface LayoutAttributes {
   scrollAnchorPosition?: ScrollAnchorPosition;
 
   /**
+   * @experimental This feature is experimental and may change in future releases.
+   *
+   * Tags this element as a sticky header within the nearest parent scroll view that has
+   * nativeStickyEnabled={true}. When the user scrolls past this element's parent, the
+   * element's translationY is adjusted in the native scroll frame so it sticks to the
+   * top of the viewport until its parent's bottom edge pushes it back up.
+   *
+   * Eliminates the JS round-trip that lags the JS-side sticky-header implementation.
+   * @default: 'none'
+   */
+  stickyPosition?: StickyPosition;
+
+  /**
    * If set, the node will be set as a lazyLayout, and the given measure callback
    * will be called whenever the node needs to be measured. The callback
    * should return a MeasuredSize tuple representing how big the node should be.
@@ -466,6 +479,19 @@ interface LayoutChildrenAttributes {
   paddingLeft?: CSSValue;
 
   /**
+   * Sets spacing between children on both axes.
+   */
+  gap?: CSSValue;
+  /**
+   * Sets spacing between flex rows.
+   */
+  rowGap?: CSSValue;
+  /**
+   * Sets spacing between flex columns.
+   */
+  columnGap?: CSSValue;
+
+  /**
    * Layout direction specifies the direction in which children and text in a hierarchy should be laid out.
    * Layout direction also affects what edge start and end refer to.
    * In right-to-left environments, this will be set to `rtl`.
@@ -557,7 +583,9 @@ type _VideoView = { __nativeElementType?: 'VideoView' };
 type _Label = { __nativeElementType?: 'Label' };
 type _TextField = { __nativeElementType?: 'TextField' };
 type _TextView = { __nativeElementType?: 'TextView' };
+type _TextAnimationGroup = { __nativeElementType?: 'TextAnimationGroup' };
 type _BlurView = { __nativeElementType?: 'BlurView' };
+type _GlassView = { __nativeElementType?: 'GlassView' };
 type _SpinnerView = { __nativeElementType?: 'SpinnerView' };
 type _ShapeView = { __nativeElementType?: 'ShapeView' };
 
@@ -653,6 +681,15 @@ interface ViewAttributes {
    * Use `"linear-gradient(color1 stop1, color2 stop2, color3 stop3...)"` to set a color with custom stops.
    */
   background?: string;
+
+  /**
+   * Applies an alpha mask to the view using a gradient. The gradient's alpha channel
+   * controls visibility: opaque regions remain visible, transparent regions are hidden.
+   *
+   * Use `"linear-gradient(#000000, transparent)"` to fade from fully visible to fully transparent.
+   * Use `"linear-gradient(color1 stop1, color2 stop2, ...)"` for custom stops.
+   */
+  maskImage?: string;
 
   /**
    * Sets the background color of the view.
@@ -1019,6 +1056,20 @@ export interface View extends _View, CommonView, ContainerTemplateElement {
   ref?: IRenderedElementHolder<this>;
 }
 
+// @NativeTemplateElement({ios: 'SCValdiTextAnimationGroup', android: 'com.snap.valdi.views.ValdiTextAnimationGroup', jsx: 'textanimationgroup'})
+export interface TextAnimationGroup extends _TextAnimationGroup, CommonView, ContainerTemplateElement {
+  /**
+   * Styling object allows to set multiple attribute at once
+   */
+  style?: _Style<TextAnimationGroup | View | Layout>;
+
+  /**
+   * Sets an element reference holder, which will keep track
+   * of the rendered elements.
+   */
+  ref?: IRenderedElementHolder<this>;
+}
+
 interface LeafView extends TemplateElement, ViewAttributes, LayoutAttributes {}
 
 export const enum EditTextUnfocusReason {
@@ -1037,6 +1088,19 @@ interface EditTextBeginEvent extends EditTextEvent {}
 
 interface EditTextEndEvent extends EditTextEvent {
   reason: EditTextUnfocusReason;
+}
+
+interface TextSelectionMenuEvent extends EditTextEvent {
+  selectedText: string;
+}
+
+interface TextSelectionMenuAction {
+  id: string;
+  title: string;
+}
+
+interface TextSelectionMenuActionEvent extends TextSelectionMenuEvent {
+  id: string;
 }
 
 /**
@@ -1113,10 +1177,23 @@ export interface CommonEditTextInterface extends LeafView, CommonTextAttributes 
   enabled?: boolean;
 
   /**
+   * Allows text selection when the text input is not editable.
+   * @default: true
+   */
+  selectable?: boolean;
+
+  /**
    * Set the text alignment within typing box of the text input
    * @default: "left"
    */
   textAlign?: TextFieldTextAlign;
+
+  /**
+   * Force the text direction within the text input, overriding the locale default.
+   * Useful to ensure numeric content (e.g. card numbers) always renders LTR in RTL locales.
+   * @default: "locale"
+   */
+  textDirection?: TextFieldTextDirection;
 
   /**
    * Determines at what times the Shift key is automatically pressed,
@@ -1211,6 +1288,23 @@ export interface TextField extends _TextField, CommonEditTextInterface {
    * of the rendered elements.
    */
   ref?: IRenderedElementHolder<this>;
+
+  /**
+   * When true, the text field reduces the font size until the text fits within its bounding
+   * rectangle, or reaches the minimum font size set by minimumScaleFactor.
+   * @default: false
+   * @note Does not support AttributedText values on iOS (UIKit strips formatting during scaling).
+   * @see minimumScaleFactor
+   */
+  adjustsFontSizeToFitWidth?: boolean;
+
+  /**
+   * The smallest multiplier for the current font size that yields an acceptable font size
+   * when shrinking text to fit. Used in conjunction with adjustsFontSizeToFitWidth.
+   * @default: 0
+   * @see adjustsFontSizeToFitWidth
+   */
+  minimumScaleFactor?: number;
 }
 
 /**
@@ -1229,7 +1323,14 @@ export interface TextFieldInteractive extends TextField {
 }
 
 // @NativeTemplateElement({ios: 'SCValdiTextView', android: 'com.snap.valdi.views.ValdiEditTextMultiline', jsx: 'textview'})
-export interface TextView extends _TextView, CommonEditTextInterface {
+export interface TextView extends _TextView, CommonEditTextInterface, ContainerTemplateElement {
+  /**
+   * The content type identifies what keyboard keys
+   * and capabilities are available on the input and which ones appear by default.
+   * @default: 'default'
+   */
+  contentType?: TextFieldContentType;
+
   /**
    * Setting this property to a different key type changes the visible title of the Return key.
    * Setting this property will also impact the behavior of the return key.
@@ -1255,6 +1356,69 @@ export interface TextView extends _TextView, CommonEditTextInterface {
    * @default: "center"
    */
   textGravity?: TextViewTextGravity;
+
+  /**
+   * This property controls the maximum number of lines to use to fit the text view's text into its bounding rectangle.
+   * To remove any maximum limit, and use as many lines as needed, set the value to 0.
+   * @default: 0
+   */
+  numberOfLines?: number;
+
+  /**
+   * Optionally adds a visual decoration effect to the text view's text.
+   * @default: undefined
+   */
+  textDecoration?: LabelTextDecoration;
+
+  /**
+   * Controls how hidden text overflow content is signaled to users. It can be clipped or display
+   * an ellipsis.
+   * @default: undefined
+   */
+  textOverflow?: 'ellipsis' | 'clip';
+
+  /**
+   * Rendering size of each line of the text view as a multiple of the font height.
+   * If the lineHeight value is above 1, spacing is added on top of each line of the text.
+   * @default: 1
+   * Example: A value of 2 will double the height of each line.
+   */
+  lineHeight?: number;
+
+  /**
+   * Explicit rendering size of each line of the text view, in points.
+   * When both lineHeight and lineHeightAbsolute are provided, lineHeightAbsolute takes precedence.
+   * @default: undefined
+   */
+  lineHeightAbsolute?: number;
+
+  /**
+   * Overrides underline drawing geometry for underlined text ranges.
+   *
+   * Format: "height onWidth offWidth offset".
+   * Use "0 0" for onWidth/offWidth to draw a solid underline.
+   *
+   * @example
+   * ```
+   * customUnderlineStyle="1 1 1 -2"
+   * ```
+   *
+   * @default: undefined
+   */
+  customUnderlineStyle?: LabelCustomUnderlineStyle;
+
+  /**
+   * [iOS-Only]
+   * Builds custom edit menu actions for the current text selection.
+   * The system suggested edit menu actions, such as Copy, are appended by the native text view.
+   */
+  onTextSelectionMenu?: (event: TextSelectionMenuEvent) => TextSelectionMenuAction[];
+
+  /**
+   * [iOS-Only]
+   * Called when a custom edit menu action returned from onTextSelectionMenu is selected.
+   */
+  onTextSelectionMenuAction?: (event: TextSelectionMenuActionEvent) => void;
 
   /**
    * Set the color for the background effect of the text view
@@ -1374,6 +1538,27 @@ export interface ImageView extends _ImageView, LeafView {
   ref?: IRenderedElementHolder<this>;
 }
 
+export interface IWebViewNativeController {}
+
+// @NativeTemplateElement({ios: 'SCValdiWebView', android: 'com.snap.valdi.modules.webview.ValdiWebView', jsx: 'webview'})
+export interface WebViewElement extends LeafView {
+  /**
+   * Native webview controller created by valdi_webview.
+   */
+  controller?: IWebViewNativeController;
+
+  /**
+   * Styling object allows to set multiple attribute at once
+   */
+  style?: _Style<WebViewElement | View | Layout>;
+
+  /**
+   * Sets an element reference holder, which will keep track
+   * of the rendered elements.
+   */
+  ref?: IRenderedElementHolder<this>;
+}
+
 // @NativeTemplateElement({ios: 'SCValdiVideoView', android: 'com.snap.valdi.views.ValdiVideoView', jsx: 'video'})
 export interface VideoView extends _VideoView, LeafView {
   /**
@@ -1460,7 +1645,7 @@ export interface CommonTextAttributes {
    * - 2) required: the size of the font
    * - 3) optional: the scaling type (or 'unscaled' for no scaling)
    * - 4) optional: the maximum size of the font after scaling
-   * @example: 'AvenirNext-Bold 16 unscaled 16'
+   * @example: 'Montserrat-Bold 16 unscaled 16'
    * @default: 'system 12'
    */
   font?: string;
@@ -1521,12 +1706,34 @@ export interface CommonLabel extends CommonTextAttributes {
   textDecoration?: LabelTextDecoration;
 
   /**
-   * Rendering size of each line of the label, this value is a ratio of the font height.
-   * If the lineHeight ratio is above 1, spacing is added on top of each line of the text
+   * Overrides underline drawing geometry for underlined text ranges.
+   *
+   * Format: "height onWidth offWidth offset".
+   * Use "0 0" for onWidth/offWidth to draw a solid underline.
+   *
+   * @example
+   * ```
+   * customUnderlineStyle="1 1 1 -2"
+   * ```
+   *
+   * @default: undefined
+   */
+  customUnderlineStyle?: LabelCustomUnderlineStyle;
+
+  /**
+   * Rendering size of each line of the label as a multiple of the font height.
+   * If the lineHeight value is above 1, spacing is added on top of each line of the text.
    * @default: 1
-   * Example: A value of 2 will double the height of each line
+   * Example: A value of 2 will double the height of each line.
    */
   lineHeight?: number;
+
+  /**
+   * Explicit rendering size of each line of the label, in points.
+   * When both lineHeight and lineHeightAbsolute are provided, lineHeightAbsolute takes precedence.
+   * @default: undefined
+   */
+  lineHeightAbsolute?: number;
 
   /**
    * Extra spacing added at the end of each character, in points
@@ -1534,10 +1741,43 @@ export interface CommonLabel extends CommonTextAttributes {
    * @default: 0
    */
   letterSpacing?: number;
+
+  /**
+   * Whether the label text can be selected and copied.
+   * @default: false
+   */
+  selectable?: boolean;
+
+  /**
+   * Selection for the label.
+   * - first index for start of selection
+   * - second index for end of selection
+   * - set both to the same to select at a single position
+   */
+  selection?: [number, number];
+
+  /**
+   * Callback called when the label selection is changed.
+   * The event parameter contains the current text value and the selected indexes.
+   */
+  onSelectionChange?: (event: EditTextEvent) => void;
+
+  /**
+   * [iOS-Only]
+   * Builds custom edit menu actions for the current label text selection.
+   * The system suggested edit menu actions, such as Copy, are appended by the native label.
+   */
+  onTextSelectionMenu?: (event: TextSelectionMenuEvent) => TextSelectionMenuAction[];
+
+  /**
+   * [iOS-Only]
+   * Called when a custom edit menu action returned from onTextSelectionMenu is selected.
+   */
+  onTextSelectionMenuAction?: (event: TextSelectionMenuActionEvent) => void;
 }
 
-// @NativeTemplateElement({ios: 'SCValdiLabel', android: 'android.widget.TextView', jsx: 'label'})
-export interface Label extends _Label, LeafView, CommonLabel {
+// @NativeTemplateElement({ios: 'SCValdiLabel', android: 'com.snap.valdi.views.ValdiTextView', jsx: 'label'})
+export interface Label extends _Label, LeafView, ContainerTemplateElement, CommonLabel {
   /**
    * Styling object allows to set multiple attribute at once
    */
@@ -1877,6 +2117,50 @@ export interface ScrollViewInteractive extends ScrollView {
    * @default: false
    */
   maintainScrollAnchor?: boolean;
+
+  /**
+   * @experimental This feature is experimental and may change in future releases.
+   *
+   * When enabled, content size growth is matched by an equal shift in contentOffset.y so
+   * the visible content stays put. Intended for live-update scenarios where the user is
+   * scrolled away from the newest end and shouldn't be bumped when new content lands.
+   * @default: false
+   */
+  preserveScrollPosition?: boolean;
+
+  /**
+   * @experimental This feature is experimental and may change in future releases.
+   *
+   * When enabled, descendants tagged with stickyPosition='top' are repositioned in the
+   * native scroll pass (same VSYNC as the scroll gesture), skipping the JS round-trip
+   * that lags the JS-side sticky-header implementation.
+   * @default: false
+   */
+  nativeStickyEnabled?: boolean;
+
+  /**
+   * @experimental This feature is experimental and may change in future releases.
+   *
+   * Pixels of visual overhang above sticky headers under this scroll. Extends the
+   * effective header height for the sticky clamp so consumers that render a bar
+   * above the header (e.g. SectionList with stickyCover) do not overlap the next
+   * section's header. Only applies when nativeStickyEnabled=true.
+   * @default: 0
+   */
+  nativeStickyCover?: number;
+
+  /**
+   * @experimental This feature is experimental and may change in future releases.
+   *
+   * Pixels below the scroll viewport top where sticky headers should pin. Matches
+   * CSS `position: sticky; top: N`. Use when a floating page header (e.g. Subscreen's
+   * SubscreenHeader) has a visual footprint (gradient, shadow, animated height)
+   * extending below its Yoga bounds; without this the sticky headers pin at Yoga-top
+   * of the scroll viewport and can end up clipped behind the floating header.
+   * Only applies when nativeStickyEnabled=true.
+   * @default: 0
+   */
+  nativeStickyOffset?: number;
 }
 
 // @NativeTemplateElement({ios: 'SCValdiSpinnerView', android: 'com.snap.valdi.views.ValiSpinnerView', jsx: 'spinner'})
@@ -1929,6 +2213,84 @@ export interface BlurView extends _BlurView, ViewAttributes, LayoutAttributes, C
    * Styling object allows to set multiple attribute at once
    */
   style?: _Style<BlurView | View | Layout>;
+
+  /**
+   * Sets an element reference holder, which will keep track
+   * of the rendered elements.
+   */
+  ref?: IRenderedElementHolder<this>;
+}
+
+/**
+ * The visual style of a `<glass>` element's Liquid Glass material.
+ *
+ * - `regular`: an adaptive, frosted material that adjusts to the content behind it.
+ * - `clear`: a more transparent material that shows more of the content behind it.
+ */
+export type GlassStyle = 'regular' | 'clear';
+
+/**
+ * The light/dark appearance a `<glass>` element's material resolves against,
+ * independent of the app's appearance.
+ *
+ * - `light`: pins the material to its light variant.
+ * - `dark`: pins the material to its dark variant.
+ */
+export type GlassAppearance = 'light' | 'dark';
+
+/**
+ * `<glass>` renders an Apple "Liquid Glass" material (iOS 26+) behind its children.
+ *
+ * iOS ONLY. There is no Android equivalent for `UIGlassEffect`, so on Android
+ * `<glass>` falls through to a plain `ValdiView` (children render, no material,
+ * no crash) — mirroring `<blur>`. On iOS below 26 it degrades to a `UIBlurEffect`
+ * material so the surface still looks reasonable with no caller changes.
+ *
+ * Prefer `glassTintColor` over `backgroundColor` to tint the material:
+ * `backgroundColor` (and gradient `background`) paint an opaque layer that sits
+ * over the sampled backdrop and muddies the glass, exactly as on `<blur>`.
+ *
+ * If you need a bespoke Android/older-iOS appearance, branch in TS with
+ * `Device.isIOS()` / `Device.getSystemVersion()` and render a translucent
+ * `<view>` fallback.
+ */
+// @NativeTemplateElement({ios: 'SCValdiGlassView', android: 'com.snap.valdi.views.ValdiView', jsx: 'glass'})
+export interface GlassView
+  extends _GlassView,
+    ViewAttributes,
+    LayoutAttributes,
+    LayoutChildrenAttributes,
+    ContainerTemplateElement {
+  /**
+   * The Liquid Glass material style. Defaults to `regular`. iOS 26+ only;
+   * ignored on Android and older iOS.
+   */
+  glassStyle?: GlassStyle;
+
+  /**
+   * A color to tint the glass material with. iOS 26+ only; ignored on Android
+   * and older iOS. Use this instead of `backgroundColor` to tint the material.
+   */
+  glassTintColor?: Color;
+
+  /**
+   * When `true`, the glass reacts to touches with the interactive Liquid Glass
+   * animation. Defaults to `false`. iOS 26+ only; ignored on Android and older iOS.
+   */
+  interactive?: boolean;
+
+  /**
+   * Pins the material to a light or dark variant (`overrideUserInterfaceStyle`)
+   * regardless of the app's appearance. When absent the material follows the app,
+   * and `regular` glass renders bright in light mode, which `glassTintColor` can't
+   * fully darken. iOS only; ignored on Android.
+   */
+  glassAppearance?: GlassAppearance;
+
+  /**
+   * Styling object allows to set multiple attribute at once
+   */
+  style?: _Style<GlassView | View | Layout>;
 
   /**
    * Sets an element reference holder, which will keep track
@@ -2131,6 +2493,8 @@ type LayoutFlexBasisProperty = CSSValue;
 
 export type ScrollAnchorPosition = 'none' | 'top' | 'bottom';
 
+export type StickyPosition = 'none' | 'top';
+
 export type LayoutAccessibilityCategory =
   | 'auto'
   | 'view'
@@ -2149,7 +2513,8 @@ export type LayoutAccessibilityPriority = number | AccessibilityPriority;
 
 // Label attributes types
 export type LabelValue = string | AttributedText;
-export type LabelTextDecoration = 'none' | 'strikethrough' | 'underline';
+export type LabelTextDecoration = 'none' | 'strikethrough' | 'underline' | 'dashed-underline' | 'dotted-underline';
+export type LabelCustomUnderlineStyle = `${number} ${number} ${number} ${number}`;
 export type LabelTextAlign = 'left' | 'right' | 'center' | 'justified';
 export type LabelFontWeight = 'light' | 'normal' | 'medium' | 'demi-bold' | 'bold' | 'black';
 export type LabelFontStyle = 'normal' | 'italic';
@@ -2161,6 +2526,7 @@ export type ImageObjectFit = 'fill' | 'contain' | 'cover' | 'none';
 export type TextFieldAutocapitalization = 'sentences' | 'words' | 'characters' | 'none';
 export type TextFieldAutocorrection = 'default' | 'none';
 export type TextFieldTextAlign = 'left' | 'center' | 'right';
+export type TextFieldTextDirection = 'ltr' | 'rtl' | 'locale';
 export type TextFieldReturnKeyText = 'done' | 'go' | 'join' | 'next' | 'search' | 'send' | 'continue';
 export type TextFieldKeyboardAppearance = 'default' | 'dark' | 'light';
 export type TextFieldContentType =

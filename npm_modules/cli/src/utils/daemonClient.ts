@@ -384,7 +384,11 @@ async function tryAdbForward(port: number): Promise<void> {
 }
 
 export async function connectToDaemon(port: number = DEFAULT_PORT): Promise<DaemonConnection> {
-  await tryAdbForward(port);
+  // Only set up adb forwarding for mobile ports — standalone macOS apps listen
+  // directly on localhost and adb forward would shadow them.
+  if (port !== STANDALONE_PORT) {
+    await tryAdbForward(port);
+  }
   return new Promise((resolve, reject) => {
     const socket = net.createConnection({ port, host: '127.0.0.1' });
 

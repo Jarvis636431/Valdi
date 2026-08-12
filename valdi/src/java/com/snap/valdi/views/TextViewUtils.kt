@@ -37,12 +37,32 @@ object TextViewUtils {
         }
     }
 
+    fun resolveTextDirectionHeuristic(textView: TextView): TextDirectionHeuristic {
+        return when (textView.textDirection) {
+            View.TEXT_DIRECTION_ANY_RTL -> TextDirectionHeuristics.ANYRTL_LTR
+            View.TEXT_DIRECTION_LTR -> TextDirectionHeuristics.LTR
+            View.TEXT_DIRECTION_RTL -> TextDirectionHeuristics.RTL
+            View.TEXT_DIRECTION_FIRST_STRONG_LTR -> TextDirectionHeuristics.FIRSTSTRONG_LTR
+            View.TEXT_DIRECTION_FIRST_STRONG_RTL -> TextDirectionHeuristics.FIRSTSTRONG_RTL
+            TextView.TEXT_DIRECTION_LOCALE -> ValdiTextDirectionHeuristic
+            else -> ValdiTextDirectionHeuristic
+        }
+    }
+
     /**
      * Resolves the height measure spec for the given text view.
      * This will make sure the TextView measures like on iOS, with a height of 0 if no text is set.
      */
     fun resolveHeightMeasureSpec(textView: TextView, heightMeasureSpec: Int): Int {
         return if (textView.text.isNullOrEmpty() && View.MeasureSpec.getMode(heightMeasureSpec) != View.MeasureSpec.EXACTLY) {
+            resolveEmptyTextHeightMeasureSpec(heightMeasureSpec)
+        } else {
+            heightMeasureSpec
+        }
+    }
+
+    fun resolveEmptyTextHeightMeasureSpec(heightMeasureSpec: Int): Int {
+        return if (View.MeasureSpec.getMode(heightMeasureSpec) != View.MeasureSpec.EXACTLY) {
             // iOS like behavior: When text is empty, label height should be zero.
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.EXACTLY)
         } else {

@@ -149,6 +149,9 @@ bool JavaScriptANRDetector::onANR(JavaScriptTaskScheduler& taskScheduler,
         snap::utils::time::Duration<std::chrono::steady_clock>(detectionThreshold).toString();
     if (moduleName.isEmpty()) {
         message = fmt::format("Detected unattributed ANR after {}", detectionThresholdString);
+        // getANRAttributionInfo() reads saved native state, not JS, so it is safe to call while the
+        // ANR has the JS thread stuck.
+        message += taskScheduler.getANRAttributionInfo();
     } else {
         message = fmt::format("Detected ANR in '{}' after {}", moduleName, detectionThresholdString);
     }
@@ -216,6 +219,11 @@ void JavaScriptANRDetector::checkForANRs() {
                 entry->ack = false;
                 entry->taskScheduler->dispatchOnJsThreadAsync(nullptr,
                                                               [entry](const auto& /*jsEntry*/) { entry->ack = true; });
+            } else if (!entry->taskScheduler->isReadyForANRDetection()) {
+                // Bootstrap can legitimately hold the JS thread past the threshold on slow
+                // devices. Slide the window on every tick while the scheduler is not ready so
+                // the in-flight syn gets a full detection budget once it becomes ready.
+                entry->synScheduledTime = timepoint;
             } else if (entry->synScheduledTime.value() + detectionThreshold < timepoint) {
                 entry->didANR = true;
                 auto& entryToProcess = entriesWithANRToProcess.emplace_back();

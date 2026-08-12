@@ -35,6 +35,8 @@ data class ValdiTweaks(
          val enableHardwareLayerWorkaround: Boolean = false,
          val maxViewOperationsProcessingTimeMs: Int = 0,
          val disableHitTestSyncDeadline: Boolean = false,
+         val enableLayoutInvalidationRetry: Boolean = false,
+         val enableLayoutSpecsCaching: Boolean = false,
          val enableTextAlignmentForRTL: Boolean = true,
          val updatePointScaleOnResume: Boolean = false,
          /**
@@ -42,6 +44,16 @@ data class ValdiTweaks(
           * screen-space rect from `getLocationOnScreen(0,0) + view.width/height` without mapping
           * all four corners through the parent-transform chain. Use as an escape hatch if the
           * transform-aware hit-test causes regressions.
-          */
+         */
          val disableTransformAwareHitTest: Boolean = false,
+         /**
+          * When true, clearing the Valdi `selection` attribute does not move the caret (matches iOS).
+          * When false, legacy behavior resets the caret to index 0.
+          */
+         val editTextResetSelectionMatchesIos: Boolean = false,
+         /**
+          * When true, use direct TextViewMeasureDelegate using StaticLayout/TextPaint for text measurement
+          * instead of creating and measuring placeholder Android TextView instances.
+          */
+         val enableDirectTextViewMeasure: Boolean = false,
 )

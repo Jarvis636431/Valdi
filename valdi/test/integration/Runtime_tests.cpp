@@ -36,6 +36,7 @@
 #include "valdi/standalone_runtime/StandaloneNodeRef.hpp"
 #include "valdi/standalone_runtime/StandaloneView.hpp"
 #include "valdi/standalone_runtime/StandaloneViewManager.hpp"
+#include "valdi/standalone_runtime/StandaloneViewTransaction.hpp"
 #include "valdi_core/AssetLoadObserver.hpp"
 #include "valdi_core/cpp/JavaScript/JavaScriptPathResolver.hpp"
 #include "valdi_core/cpp/Resources/Asset.hpp"
@@ -49,8 +50,10 @@
 #include "valdi_core/cpp/Utils/ValueTypedProxyObject.hpp"
 #include "valdi_test_utils.hpp"
 #include "gtest/gtest.h"
-#include <yoga/YGNode.h>
+#include <yoga/Yoga.h>
+#include <yoga/node/Node.h>
 
+#include "valdi_core/cpp/Marshalling/RegisteredCppGeneratedClass.hpp"
 #include "valdi_modules/test/test.hpp"
 
 #include <atomic>
@@ -1115,26 +1118,26 @@ TEST_P(RuntimeFixture, canSetupFlexboxTree) {
     wrapper.waitUntilAllUpdatesCompleted();
 
     auto rootViewNode = tree->getRootViewNode();
-    auto rootYogaNode = rootViewNode->getYogaNode();
+    auto* rootYogaNode = facebook::yoga::resolveRef(rootViewNode->getYogaNode());
 
     ASSERT_NE(nullptr, rootYogaNode);
     ASSERT_EQ(rootViewNode.get(), Valdi::Yoga::getAttachedViewNode(rootYogaNode));
 
     ASSERT_EQ(2, static_cast<int>(rootYogaNode->getChildren().size()));
 
-    auto firstChild = rootYogaNode->getChild(0);
+    auto* firstChild = rootYogaNode->getChild(0);
     ASSERT_EQ(rootViewNode->copyChildren()[0].get(), Valdi::Yoga::getAttachedViewNode(firstChild));
 
     ASSERT_EQ(0, static_cast<int>(firstChild->getChildren().size()));
 
-    auto secondChild = rootYogaNode->getChild(1);
+    auto* secondChild = rootYogaNode->getChild(1);
     auto secondChildNode = rootViewNode->copyChildren()[1];
 
     ASSERT_EQ(secondChildNode.get(), Valdi::Yoga::getAttachedViewNode(secondChild));
     ASSERT_EQ(3, static_cast<int>(secondChild->getChildren().size()));
 
     size_t i = 0;
-    for (const auto& child : secondChild->getChildren()) {
+    for (auto* child : secondChild->getChildren()) {
         ASSERT_EQ(secondChildNode->copyChildren()[i].get(), Valdi::Yoga::getAttachedViewNode(child));
 
         ASSERT_EQ(0, static_cast<int>(child->getChildren().size()));
@@ -1153,7 +1156,7 @@ TEST_P(RuntimeFixture, canSetupFlexboxTreeWithChildDocument) {
     wrapper.waitUntilAllUpdatesCompleted();
 
     auto rootViewNode = tree->getRootViewNode();
-    auto rootYogaNode = rootViewNode->getYogaNode();
+    auto* rootYogaNode = facebook::yoga::resolveRef(rootViewNode->getYogaNode());
 
     ASSERT_NE(nullptr, rootYogaNode);
     ASSERT_EQ(rootViewNode.get(), Valdi::Yoga::getAttachedViewNode(rootYogaNode));
@@ -1170,7 +1173,7 @@ TEST_P(RuntimeFixture, canSetupFlexboxTreeWithChildDocument) {
     ASSERT_EQ(1, static_cast<int>(rootYogaNode->getChildren().size()));
 
     auto containerViewNode = rootViewNode->copyChildren()[0];
-    auto containerYogaNode = rootYogaNode->getChild(0);
+    auto* containerYogaNode = rootYogaNode->getChild(0);
 
     ASSERT_EQ(containerViewNode.get(), Valdi::Yoga::getAttachedViewNode(containerYogaNode));
 
@@ -1183,24 +1186,24 @@ TEST_P(RuntimeFixture, canSetupFlexboxTreeWithChildDocument) {
 
     // We should have the full flexbox tree of the child context attached to this flexbox node tree
 
-    auto childRootYogaNode = containerYogaNode->getChild(0);
+    auto* childRootYogaNode = containerYogaNode->getChild(0);
 
     ASSERT_EQ(2, static_cast<int>(childRootYogaNode->getChildren().size()));
 
-    auto firstChild = childRootYogaNode->getChild(0);
+    auto* firstChild = childRootYogaNode->getChild(0);
 
     ASSERT_EQ(childContextViewNode->copyChildren()[0].get(), Valdi::Yoga::getAttachedViewNode(firstChild));
 
     ASSERT_EQ(0, static_cast<int>(firstChild->getChildren().size()));
 
-    auto secondChild = childRootYogaNode->getChild(1);
+    auto* secondChild = childRootYogaNode->getChild(1);
     auto secondChildNode = childContextViewNode->copyChildren()[1];
 
     ASSERT_EQ(secondChildNode.get(), Valdi::Yoga::getAttachedViewNode(secondChild));
     ASSERT_EQ(3, static_cast<int>(secondChild->getChildren().size()));
 
     size_t i = 0;
-    for (const auto& child : secondChild->getChildren()) {
+    for (auto* child : secondChild->getChildren()) {
         ASSERT_EQ(secondChildNode->copyChildren()[i].get(), Valdi::Yoga::getAttachedViewNode(child));
 
         ASSERT_EQ(0, static_cast<int>(child->getChildren().size()));
@@ -1349,7 +1352,7 @@ TEST_P(RuntimeFixture, canSetupFlexboxTreeWithRenderIfs) {
     wrapper.waitUntilAllUpdatesCompleted();
 
     auto rootViewNode = tree->getRootViewNode();
-    auto rootYogaNode = rootViewNode->getYogaNode();
+    auto* rootYogaNode = facebook::yoga::resolveRef(rootViewNode->getYogaNode());
 
     // All ViewNodes should be generated
 
@@ -1370,11 +1373,11 @@ TEST_P(RuntimeFixture, canSetupFlexboxTreeWithRenderIfs) {
 
     ASSERT_EQ(2, static_cast<int>(rootYogaNode->getChildren().size()));
 
-    auto child2YogaNode = rootYogaNode->getChild(0);
-    auto child4YogaNode = rootYogaNode->getChild(1);
+    auto* child2YogaNode = rootYogaNode->getChild(0);
+    auto* child4YogaNode = rootYogaNode->getChild(1);
 
-    ASSERT_EQ(child2YogaNode, child2ViewNode->getYogaNode());
-    ASSERT_EQ(child4YogaNode, child4ViewNode->getYogaNode());
+    ASSERT_EQ(child2ViewNode->getYogaNode(), static_cast<YGNode*>(child2YogaNode));
+    ASSERT_EQ(child4ViewNode->getYogaNode(), static_cast<YGNode*>(child4YogaNode));
 
     // We then add child3
 
@@ -1388,9 +1391,9 @@ TEST_P(RuntimeFixture, canSetupFlexboxTreeWithRenderIfs) {
     auto child3ViewNode = child3ViewNodes[0];
 
     ASSERT_EQ(3, static_cast<int>(rootYogaNode->getChildren().size()));
-    ASSERT_EQ(child2ViewNode->getYogaNode(), rootYogaNode->getChild(0));
-    ASSERT_EQ(child3ViewNode->getYogaNode(), rootYogaNode->getChild(1));
-    ASSERT_EQ(child4ViewNode->getYogaNode(), rootYogaNode->getChild(2));
+    ASSERT_EQ(child2ViewNode->getYogaNode(), static_cast<YGNode*>(rootYogaNode->getChild(0)));
+    ASSERT_EQ(child3ViewNode->getYogaNode(), static_cast<YGNode*>(rootYogaNode->getChild(1)));
+    ASSERT_EQ(child4ViewNode->getYogaNode(), static_cast<YGNode*>(rootYogaNode->getChild(2)));
 
     // We now insert the last child, child1
 
@@ -1404,10 +1407,10 @@ TEST_P(RuntimeFixture, canSetupFlexboxTreeWithRenderIfs) {
     auto child1ViewNode = child1ViewNodes[0];
 
     ASSERT_EQ(4, static_cast<int>(rootYogaNode->getChildren().size()));
-    ASSERT_EQ(child1ViewNode->getYogaNode(), rootYogaNode->getChild(0));
-    ASSERT_EQ(child2ViewNode->getYogaNode(), rootYogaNode->getChild(1));
-    ASSERT_EQ(child3ViewNode->getYogaNode(), rootYogaNode->getChild(2));
-    ASSERT_EQ(child4ViewNode->getYogaNode(), rootYogaNode->getChild(3));
+    ASSERT_EQ(child1ViewNode->getYogaNode(), static_cast<YGNode*>(rootYogaNode->getChild(0)));
+    ASSERT_EQ(child2ViewNode->getYogaNode(), static_cast<YGNode*>(rootYogaNode->getChild(1)));
+    ASSERT_EQ(child3ViewNode->getYogaNode(), static_cast<YGNode*>(rootYogaNode->getChild(2)));
+    ASSERT_EQ(child4ViewNode->getYogaNode(), static_cast<YGNode*>(rootYogaNode->getChild(3)));
 
     // Now removing all the render-if nodes
 
@@ -1417,8 +1420,8 @@ TEST_P(RuntimeFixture, canSetupFlexboxTreeWithRenderIfs) {
     wrapper.waitUntilAllUpdatesCompleted();
 
     ASSERT_EQ(2, static_cast<int>(rootYogaNode->getChildren().size()));
-    ASSERT_EQ(child2ViewNode->getYogaNode(), rootYogaNode->getChild(0));
-    ASSERT_EQ(child4ViewNode->getYogaNode(), rootYogaNode->getChild(1));
+    ASSERT_EQ(child2ViewNode->getYogaNode(), static_cast<YGNode*>(rootYogaNode->getChild(0)));
+    ASSERT_EQ(child4ViewNode->getYogaNode(), static_cast<YGNode*>(rootYogaNode->getChild(1)));
 }
 
 TEST_P(RuntimeFixture, jsCanAttachToMainThread) {
@@ -2876,6 +2879,29 @@ TEST_P(RuntimeFixture, handlesTranslationsInLimitToViewport) {
         getRootView(tree));
 }
 
+TEST_P(RuntimeFixture, handlesNegativeScaleYInLimitToViewport) {
+    wrapper.runtime->setLimitToViewportDisabled(false);
+
+    // scaleY=1.0: bottom-child at local y=150..200, outside 100×100 viewport → no view created
+    auto viewModel = makeShared<ValueMap>();
+    (*viewModel)[STRING_LITERAL("scaleY")] = Value(1.0f);
+
+    auto tree = wrapper.createViewNodeTreeAndContext(
+        STRING_LITERAL("ScaleTransformViewport@test/src/ScaleTransformViewport"), Value(viewModel), Value::undefined());
+    wrapper.waitUntilAllUpdatesCompleted();
+    tree->setLayoutSpecs(Size(100, 100), LayoutDirectionLTR);
+
+    ASSERT_EQ(nullptr, tree->getViewForNodePath(parseNodePath("bottom-child")));
+
+    // scaleY=-1.0: container flips, bottom-child appears at visual y=0..50 → inside viewport → view created
+    auto viewModel2 = makeShared<ValueMap>();
+    (*viewModel2)[STRING_LITERAL("scaleY")] = Value(-1.0f);
+    wrapper.setViewModel(tree->getContext(), Value(std::move(viewModel2)));
+    wrapper.waitUntilAllUpdatesCompleted();
+
+    ASSERT_NE(nullptr, tree->getViewForNodePath(parseNodePath("bottom-child")));
+}
+
 TEST_P(RuntimeFixture, slotCanApplyAttributeDynamicallyToChild) {
     auto tree =
         wrapper.createViewNodeTreeAndContext("test", "SlotApplyAttributeParent", Valdi::Value(makeShared<ValueMap>()));
@@ -4187,11 +4213,14 @@ TEST_P(RuntimeFixture, renderRequestCanRetainAndReleaseItsEntries) {
         makeShared<ValueFunctionWithCallable>([](const auto& /*parameters*/) { return Value(); });
     auto layoutCompletionCallback =
         makeShared<ValueFunctionWithCallable>([](const auto& /*parameters*/) { return Value(); });
+    auto drawCompletionCallback =
+        makeShared<ValueFunctionWithCallable>([](const auto& /*parameters*/) { return Value(); });
 
     ASSERT_EQ(1, viewClass.getInternedString().use_count());
     ASSERT_EQ(1, attributeValue.use_count());
     ASSERT_EQ(1, animationsCompletionCallback.use_count());
     ASSERT_EQ(1, layoutCompletionCallback.use_count());
+    ASSERT_EQ(1, drawCompletionCallback.use_count());
 
     auto renderRequest = Valdi::makeShared<RenderRequest>();
 
@@ -4213,10 +4242,14 @@ TEST_P(RuntimeFixture, renderRequestCanRetainAndReleaseItsEntries) {
     auto* onLayoutComplete = renderRequest->appendOnLayoutComplete();
     onLayoutComplete->setCallback(layoutCompletionCallback);
 
+    auto* onNextDraw = renderRequest->appendOnNextDraw();
+    onNextDraw->setCallback(drawCompletionCallback);
+
     ASSERT_EQ(2, viewClass.getInternedString().use_count());
     ASSERT_EQ(2, attributeValue.use_count());
     ASSERT_EQ(2, animationsCompletionCallback.use_count());
     ASSERT_EQ(2, layoutCompletionCallback.use_count());
+    ASSERT_EQ(2, drawCompletionCallback.use_count());
 
     renderRequest = nullptr;
 
@@ -4224,6 +4257,7 @@ TEST_P(RuntimeFixture, renderRequestCanRetainAndReleaseItsEntries) {
     ASSERT_EQ(1, attributeValue.use_count());
     ASSERT_EQ(1, animationsCompletionCallback.use_count());
     ASSERT_EQ(1, layoutCompletionCallback.use_count());
+    ASSERT_EQ(1, drawCompletionCallback.use_count());
 }
 
 struct Visitor {
@@ -4250,6 +4284,7 @@ TEST_P(RuntimeFixture, renderRequestVisitHandlesAlignment) {
     renderRequest->appendStartAnimations();
     renderRequest->appendEndAnimations();
     renderRequest->appendOnLayoutComplete();
+    renderRequest->appendOnNextDraw();
 
     Visitor visitor;
     renderRequest->visitEntries(visitor);
@@ -4299,6 +4334,9 @@ TEST_P(RuntimeFixture, renderRequestCanSerialize) {
     auto* onLayoutComplete = renderRequest->appendOnLayoutComplete();
     onLayoutComplete->setCallback(callback);
 
+    auto* onNextDraw = renderRequest->appendOnNextDraw();
+    onNextDraw->setCallback(callback);
+
     auto result = renderRequest->serialize(attributeIds);
 
     auto expectedCreateElement = Value()
@@ -4337,6 +4375,8 @@ TEST_P(RuntimeFixture, renderRequestCanSerialize) {
     auto expectedEndAnimations = Value().setMapValue("type", Value(STRING_LITERAL("EndAnimations")));
     auto expectedOnLayoutComplete =
         Value().setMapValue("type", Value(STRING_LITERAL("OnLayoutComplete"))).setMapValue("callback", Value(callback));
+    auto expectedOnNextDraw =
+        Value().setMapValue("type", Value(STRING_LITERAL("OnNextDraw"))).setMapValue("callback", Value(callback));
 
     auto expectedEntries = ValueArray::make({expectedCreateElement,
                                              expectedDestroyElement,
@@ -4345,11 +4385,77 @@ TEST_P(RuntimeFixture, renderRequestCanSerialize) {
                                              expectedSetElementAttribute,
                                              expectedStartAnimations,
                                              expectedEndAnimations,
-                                             expectedOnLayoutComplete});
+                                             expectedOnLayoutComplete,
+                                             expectedOnNextDraw});
 
     auto expectedResult = Value().setMapValue("contextID", Value(1)).setMapValue("entries", Value(expectedEntries));
 
     ASSERT_EQ(expectedResult, result);
+}
+
+TEST_P(RuntimeFixture, standaloneViewTransactionRunsOnNextDrawCallbacksAfterRootUpdate) {
+    StandaloneViewTransaction transaction;
+    auto rootView = makeShared<StandaloneView>(STRING_LITERAL("View"));
+
+    int callbackCount = 0;
+    transaction.scheduleOnNextDraw(rootView, [&]() { callbackCount += 1; });
+    transaction.scheduleOnNextDraw(rootView, [&]() { callbackCount += 10; });
+
+    ASSERT_EQ(0, callbackCount);
+
+    transaction.didUpdateRootView(rootView, true);
+
+    ASSERT_EQ(11, callbackCount);
+    ASSERT_EQ(1, rootView->getLayoutDidBecomeDirtyCount());
+
+    transaction.didUpdateRootView(rootView, false);
+
+    ASSERT_EQ(11, callbackCount);
+}
+
+TEST_P(RuntimeFixture, standaloneViewTransactionDefersCallbacksScheduledDuringOnNextDrawUntilNextRootUpdate) {
+    StandaloneViewTransaction transaction;
+    auto rootView = makeShared<StandaloneView>(STRING_LITERAL("View"));
+
+    int callbackCount = 0;
+    transaction.scheduleOnNextDraw(rootView, [&]() {
+        callbackCount += 1;
+        transaction.scheduleOnNextDraw(rootView, [&]() { callbackCount += 10; });
+    });
+
+    transaction.didUpdateRootView(rootView, false);
+
+    ASSERT_EQ(1, callbackCount);
+
+    transaction.didUpdateRootView(rootView, false);
+
+    ASSERT_EQ(11, callbackCount);
+}
+
+TEST_P(RuntimeFixture, viewNodeTreeOnNextDrawCallbacksWaitForRootView) {
+    auto rootView = Valdi::makeShared<StandaloneView>(STRING_LITERAL("MyRootView"));
+
+    auto tree = wrapper.runtime->createViewNodeTreeAndContext(wrapper.standaloneRuntime->getViewManagerContext(),
+                                                              STRING_LITERAL("test/src/BasicViewTree.valdi"));
+
+    wrapper.waitUntilAllUpdatesCompleted();
+    tree->setLayoutSpecs(Size(200, 200), LayoutDirectionLTR);
+
+    int callbackCount = 0;
+    auto callback = makeShared<ValueFunctionWithCallable>([&](const auto& /*callContext*/) -> Value {
+        callbackCount += 1;
+        return Value::undefined();
+    });
+
+    tree->onNextDraw(callback);
+    wrapper.waitUntilAllUpdatesCompleted();
+
+    ASSERT_EQ(0, callbackCount);
+
+    tree->setRootView(rootView);
+    wrapper.waitUntilAllUpdatesCompleted();
+
+    ASSERT_EQ(1, callbackCount);
 }
 
 class TestBridgedClass : public ValdiObject {
@@ -5133,6 +5239,18 @@ TEST_P(RuntimeFixture, canUnregisterFromLoadedAssetFromTSSide) {
     ASSERT_FALSE(assetsManager->isAssetAlive(assetKey));
 }
 
+TEST_P(RuntimeFixture, preloadBatchIsolatesThrowingModules) {
+    auto jsRuntime = wrapper.runtime->getJavaScriptRuntime();
+
+    // ErrorModule throws at evaluation; the batch must continue to the next entry instead
+    // of aborting.
+    jsRuntime->preloadModules({STRING_LITERAL("test/src/ErrorModule"), STRING_LITERAL("test/src/DirectionalAsset")}, 0);
+
+    ASSERT_FALSE(jsRuntime->isJsModuleLoaded(ResourceId(STRING_LITERAL("test"), STRING_LITERAL("src/ErrorModule"))));
+    ASSERT_TRUE(
+        jsRuntime->isJsModuleLoaded(ResourceId(STRING_LITERAL("test"), STRING_LITERAL("src/DirectionalAsset"))));
+}
+
 TEST_P(RuntimeFixture, supportsModulePreloading) {
     // "test/src/DirectionAsset" module imports "valdi_core/src/Asset"
     ASSERT_FALSE(wrapper.runtime->getJavaScriptRuntime()->isJsModuleLoaded(
@@ -5266,10 +5384,11 @@ static void registerAssetArchives(RuntimeWrapper& wrapper,
     for (const auto& path : paths) {
         auto entry = deserializedArchive.value().getEntry(path);
         if (entry) {
+            auto entryBytes = BytesView(archive.value().getSource(), entry.value().data, entry.value().size);
             requestManager.addMockedResponse(
-                STRING_FORMAT("http://localhost/{}", path),
-                STRING_LITERAL("GET"),
-                BytesView(archive.value().getSource(), entry.value().data, entry.value().size));
+                STRING_FORMAT("http://localhost/{}", path), STRING_LITERAL("GET"), entryBytes);
+            requestManager.addMockedResponseForURLSuffix(
+                STRING_FORMAT("/ComposerArtifactManagement/{}", path), STRING_LITERAL("GET"), entryBytes);
         }
     }
 }
@@ -5964,9 +6083,9 @@ TEST_P(RuntimeFixture, supportsTextAttribute) {
 
     ASSERT_TRUE(attributedText != nullptr);
 
-    ASSERT_EQ("Hello World!?!", attributedText->toString());
+    ASSERT_EQ("Hello World Code!?!", attributedText->toString());
 
-    ASSERT_EQ(static_cast<size_t>(6), attributedText->getPartsSize());
+    ASSERT_EQ(static_cast<size_t>(8), attributedText->getPartsSize());
 
     {
         ASSERT_EQ(STRING_LITERAL("Hello"), attributedText->getContentAtIndex(0));
@@ -5975,6 +6094,7 @@ TEST_P(RuntimeFixture, supportsTextAttribute) {
         ASSERT_EQ(std::nullopt, style.font);
         ASSERT_EQ(TextDecoration::Unset, style.textDecoration);
         ASSERT_EQ(std::nullopt, style.color);
+        ASSERT_EQ(nullptr, style.background);
         ASSERT_EQ(nullptr, style.onTap);
     }
 
@@ -5983,8 +6103,12 @@ TEST_P(RuntimeFixture, supportsTextAttribute) {
         const auto& style = attributedText->getStyleAtIndex(1);
 
         ASSERT_EQ(std::make_optional(STRING_LITERAL("title")), style.font);
-        ASSERT_EQ(TextDecoration::Underline, style.textDecoration);
+        ASSERT_EQ(TextDecoration::DashedUnderline, style.textDecoration);
         ASSERT_EQ(std::make_optional(Valdi::Color(static_cast<int64_t>(0xFF0000FF))), style.color);
+        ASSERT_NE(nullptr, style.background);
+        ASSERT_EQ(std::make_optional(Valdi::Color(static_cast<int64_t>(0xFFFF00FF))), style.background->color);
+        ASSERT_EQ((Valdi::TextBackgroundPadding{1, 2, 3, 4}), style.background->padding);
+        ASSERT_EQ((Valdi::Dimension{5, Valdi::Dimension::Unit::Percent}), style.background->borderRadius);
         ASSERT_EQ(nullptr, style.onTap);
     }
 
@@ -5993,28 +6117,36 @@ TEST_P(RuntimeFixture, supportsTextAttribute) {
         const auto& style = attributedText->getStyleAtIndex(2);
 
         ASSERT_EQ(std::make_optional(STRING_LITERAL("title")), style.font);
-        ASSERT_EQ(TextDecoration::Underline, style.textDecoration);
+        ASSERT_EQ(TextDecoration::DashedUnderline, style.textDecoration);
         ASSERT_EQ(std::make_optional(Valdi::Color(static_cast<int64_t>(0xFF0000FF))), style.color);
+        ASSERT_NE(nullptr, style.background);
+        ASSERT_EQ(std::make_optional(Valdi::Color(static_cast<int64_t>(0xFFFF00FF))), style.background->color);
+        ASSERT_EQ((Valdi::TextBackgroundPadding{1, 2, 3, 4}), style.background->padding);
+        ASSERT_EQ((Valdi::Dimension{5, Valdi::Dimension::Unit::Percent}), style.background->borderRadius);
         ASSERT_EQ(nullptr, style.onTap);
     }
 
     {
-        ASSERT_EQ(STRING_LITERAL("!"), attributedText->getContentAtIndex(3));
+        ASSERT_EQ(STRING_LITERAL(" "), attributedText->getContentAtIndex(3));
         const auto& style = attributedText->getStyleAtIndex(3);
 
         ASSERT_EQ(std::nullopt, style.font);
         ASSERT_EQ(TextDecoration::Unset, style.textDecoration);
-        ASSERT_EQ(std::make_optional(Valdi::Color(static_cast<int64_t>(0x0000FFFF))), style.color);
+        ASSERT_EQ(std::nullopt, style.color);
+        ASSERT_EQ(nullptr, style.background);
         ASSERT_EQ(nullptr, style.onTap);
     }
 
     {
-        ASSERT_EQ(STRING_LITERAL("?"), attributedText->getContentAtIndex(4));
+        ASSERT_EQ(STRING_LITERAL("Code"), attributedText->getContentAtIndex(4));
         const auto& style = attributedText->getStyleAtIndex(4);
 
         ASSERT_EQ(std::nullopt, style.font);
         ASSERT_EQ(TextDecoration::Unset, style.textDecoration);
-        ASSERT_EQ(std::make_optional(Valdi::Color(static_cast<int64_t>(0x008000FF))), style.color);
+        ASSERT_EQ(std::nullopt, style.color);
+        ASSERT_NE(nullptr, style.background);
+        ASSERT_EQ(std::make_optional(Valdi::Color(static_cast<int64_t>(0xFFFF00FF))), style.background->color);
+        ASSERT_EQ((Valdi::TextBackgroundPadding{6, 6, 6, 6}), style.background->padding);
         ASSERT_EQ(nullptr, style.onTap);
     }
 
@@ -6025,8 +6157,292 @@ TEST_P(RuntimeFixture, supportsTextAttribute) {
         ASSERT_EQ(std::nullopt, style.font);
         ASSERT_EQ(TextDecoration::Unset, style.textDecoration);
         ASSERT_EQ(std::make_optional(Valdi::Color(static_cast<int64_t>(0x0000FFFF))), style.color);
+        ASSERT_EQ(nullptr, style.background);
         ASSERT_EQ(nullptr, style.onTap);
     }
+
+    {
+        ASSERT_EQ(STRING_LITERAL("?"), attributedText->getContentAtIndex(6));
+        const auto& style = attributedText->getStyleAtIndex(6);
+
+        ASSERT_EQ(std::nullopt, style.font);
+        ASSERT_EQ(TextDecoration::Unset, style.textDecoration);
+        ASSERT_EQ(std::make_optional(Valdi::Color(static_cast<int64_t>(0x008000FF))), style.color);
+        ASSERT_EQ(nullptr, style.background);
+        ASSERT_EQ(nullptr, style.onTap);
+    }
+
+    {
+        ASSERT_EQ(STRING_LITERAL("!"), attributedText->getContentAtIndex(7));
+        const auto& style = attributedText->getStyleAtIndex(7);
+
+        ASSERT_EQ(std::nullopt, style.font);
+        ASSERT_EQ(TextDecoration::Unset, style.textDecoration);
+        ASSERT_EQ(std::make_optional(Valdi::Color(static_cast<int64_t>(0x0000FFFF))), style.color);
+        ASSERT_EQ(nullptr, style.background);
+        ASSERT_EQ(nullptr, style.onTap);
+    }
+}
+
+static Ref<TextAttributeValue> getTextAttributeValueFromNode(ViewNode* viewNode) {
+    auto view = StandaloneView::unwrap(viewNode->getView());
+    EXPECT_TRUE(view != nullptr);
+    if (view == nullptr) {
+        return nullptr;
+    }
+
+    auto value = view->getAttribute(STRING_LITERAL("value"));
+    EXPECT_EQ(ValueType::ValdiObject, value.getType());
+    auto attributedText = value.getTypedRef<TextAttributeValue>();
+    EXPECT_TRUE(attributedText != nullptr);
+    return attributedText;
+}
+
+static std::vector<Ref<TextInlineAttachment>> getInlineViewAttachments(const Ref<TextAttributeValue>& attributedText) {
+    std::vector<Ref<TextInlineAttachment>> attachments;
+    if (attributedText == nullptr) {
+        return attachments;
+    }
+
+    for (size_t i = 0; i < attributedText->getPartsSize(); i++) {
+        const auto& attachment = attributedText->getStyleAtIndex(i).inlineViewAttachment;
+        if (attachment != nullptr) {
+            attachments.push_back(attachment);
+        }
+    }
+    return attachments;
+}
+
+static Value inlineViewDynamicSizeViewModel(double width, double height) {
+    return Value().setMapValue("childWidth", Value(width)).setMapValue("childHeight", Value(height));
+}
+
+TEST_P(RuntimeFixture, supportsManagedChildFrameViewClasses) {
+    wrapper.standaloneRuntime->getViewManager().setManagesChildFramesForClass(STRING_LITERAL("ManagedChildFrameView"),
+                                                                              true);
+
+    auto tree = wrapper.createViewNodeTreeAndContext(
+        STRING_LITERAL("ManagedChildFrames@test/src/ManagedChildFrames"), Value(), Value());
+
+    wrapper.waitUntilAllUpdatesCompleted();
+    tree->setLayoutSpecs(Size(200, 200), LayoutDirectionLTR);
+
+    auto managedNodes = findViewNodesWithId(tree->getRootViewNode(), "managed");
+    auto childNodes = findViewNodesWithId(tree->getRootViewNode(), "managedChild");
+    ASSERT_EQ(static_cast<size_t>(1), managedNodes.size());
+    ASSERT_EQ(static_cast<size_t>(1), childNodes.size());
+
+    auto* managedNode = managedNodes[0];
+    auto* childNode = childNodes[0];
+    ASSERT_TRUE(managedNode->managesChildFrames());
+    ASSERT_TRUE(childNode->parentManagesChildFrames());
+    ASSERT_EQ(YGPositionTypeAbsolute, YGNodeStyleGetPositionType(childNode->getYogaNode()));
+    ASSERT_EQ(Frame(10, 0, 30, 20), childNode->getCalculatedFrame());
+
+    auto childView = StandaloneView::unwrap(childNode->getView());
+    ASSERT_TRUE(childView != nullptr);
+    ASSERT_EQ(Frame(), childView->getFrame());
+}
+
+TEST_P(RuntimeFixture, resolvesInlineViewAttachmentsFromTextChildren) {
+    wrapper.standaloneRuntime->getViewManager().setManagesChildFramesForClass(STRING_LITERAL("SCValdiLabel"), true);
+
+    auto tree = wrapper.createViewNodeTreeAndContext(
+        STRING_LITERAL("InlineViewTextAttribute@test/src/ManagedChildFrames"), Value(), Value());
+
+    wrapper.waitUntilAllUpdatesCompleted();
+    tree->setLayoutSpecs(Size(200, 200), LayoutDirectionLTR);
+
+    auto labelNodes = findViewNodesWithId(tree->getRootViewNode(), "inlineLabel");
+    auto childNodes = findViewNodesWithId(tree->getRootViewNode(), "inlineChild");
+    ASSERT_EQ(static_cast<size_t>(1), labelNodes.size());
+    ASSERT_EQ(static_cast<size_t>(1), childNodes.size());
+
+    auto* labelNode = labelNodes[0];
+    auto* childNode = childNodes[0];
+    ASSERT_TRUE(labelNode->managesChildFrames());
+    ASSERT_TRUE(childNode->parentManagesChildFrames());
+    ASSERT_EQ(Frame(0, 0, 18, 12), childNode->getCalculatedFrame());
+
+    auto labelView = StandaloneView::unwrap(labelNode->getView());
+    ASSERT_TRUE(labelView != nullptr);
+
+    auto value = labelView->getAttribute(STRING_LITERAL("value"));
+    ASSERT_EQ(ValueType::ValdiObject, value.getType());
+
+    auto attributedText = value.getTypedRef<TextAttributeValue>();
+    ASSERT_TRUE(attributedText != nullptr);
+    ASSERT_EQ(static_cast<size_t>(3), attributedText->getPartsSize());
+    ASSERT_EQ(STRING_LITERAL("Before "), attributedText->getContentAtIndex(0));
+    ASSERT_EQ(STRING_LITERAL(" after"), attributedText->getContentAtIndex(2));
+
+    const auto& inlineStyle = attributedText->getStyleAtIndex(1);
+    ASSERT_TRUE(inlineStyle.inlineViewAttachment != nullptr);
+    ASSERT_EQ(static_cast<size_t>(0), inlineStyle.inlineViewAttachment->getChildIndex());
+    ASSERT_EQ(InlineViewVerticalAlignment::Bottom, inlineStyle.inlineViewAttachment->getVerticalAlignment());
+    ASSERT_EQ(Size(18, 12), inlineStyle.inlineViewAttachment->getSize());
+
+    auto childView = StandaloneView::unwrap(childNode->getView());
+    ASSERT_TRUE(childView != nullptr);
+    ASSERT_EQ(Frame(), childView->getFrame());
+}
+
+TEST_P(RuntimeFixture, resolvesInlineViewVerticalAlignmentEnumValuesFromTS) {
+    wrapper.standaloneRuntime->getViewManager().setManagesChildFramesForClass(STRING_LITERAL("SCValdiLabel"), true);
+
+    auto tree = wrapper.createViewNodeTreeAndContext(
+        STRING_LITERAL("InlineViewVerticalAlignmentTextAttribute@test/src/ManagedChildFrames"), Value(), Value());
+
+    wrapper.waitUntilAllUpdatesCompleted();
+    tree->setLayoutSpecs(Size(200, 200), LayoutDirectionLTR);
+
+    auto labelNodes = findViewNodesWithId(tree->getRootViewNode(), "inlineLabel");
+    auto topNodes = findViewNodesWithId(tree->getRootViewNode(), "inlineTop");
+    auto centerNodes = findViewNodesWithId(tree->getRootViewNode(), "inlineCenter");
+    auto bottomNodes = findViewNodesWithId(tree->getRootViewNode(), "inlineBottom");
+    auto baselineNodes = findViewNodesWithId(tree->getRootViewNode(), "inlineBaseline");
+    ASSERT_EQ(static_cast<size_t>(1), labelNodes.size());
+    ASSERT_EQ(static_cast<size_t>(1), topNodes.size());
+    ASSERT_EQ(static_cast<size_t>(1), centerNodes.size());
+    ASSERT_EQ(static_cast<size_t>(1), bottomNodes.size());
+    ASSERT_EQ(static_cast<size_t>(1), baselineNodes.size());
+
+    auto* labelNode = labelNodes[0];
+    ASSERT_TRUE(labelNode->managesChildFrames());
+    ASSERT_TRUE(topNodes[0]->parentManagesChildFrames());
+    ASSERT_TRUE(centerNodes[0]->parentManagesChildFrames());
+    ASSERT_TRUE(bottomNodes[0]->parentManagesChildFrames());
+    ASSERT_TRUE(baselineNodes[0]->parentManagesChildFrames());
+
+    ASSERT_EQ(Frame(0, 0, 11, 12), topNodes[0]->getCalculatedFrame());
+    ASSERT_EQ(Frame(0, 0, 22, 24), centerNodes[0]->getCalculatedFrame());
+    ASSERT_EQ(Frame(0, 0, 33, 36), bottomNodes[0]->getCalculatedFrame());
+    ASSERT_EQ(Frame(0, 0, 44, 14), baselineNodes[0]->getCalculatedFrame());
+
+    auto attributedText = getTextAttributeValueFromNode(labelNode);
+    ASSERT_TRUE(attributedText != nullptr);
+    ASSERT_EQ(static_cast<size_t>(9), attributedText->getPartsSize());
+    ASSERT_EQ(STRING_LITERAL("A"), attributedText->getContentAtIndex(0));
+    ASSERT_EQ(STRING_LITERAL("B"), attributedText->getContentAtIndex(2));
+    ASSERT_EQ(STRING_LITERAL("C"), attributedText->getContentAtIndex(4));
+    ASSERT_EQ(STRING_LITERAL("D"), attributedText->getContentAtIndex(6));
+    ASSERT_EQ(STRING_LITERAL("E"), attributedText->getContentAtIndex(8));
+
+    auto attachments = getInlineViewAttachments(attributedText);
+    ASSERT_EQ(static_cast<size_t>(4), attachments.size());
+    ASSERT_EQ(static_cast<size_t>(0), attachments[0]->getChildIndex());
+    ASSERT_EQ(InlineViewVerticalAlignment::Top, attachments[0]->getVerticalAlignment());
+    ASSERT_EQ(Size(11, 12), attachments[0]->getSize());
+    ASSERT_EQ(static_cast<size_t>(1), attachments[1]->getChildIndex());
+    ASSERT_EQ(InlineViewVerticalAlignment::Center, attachments[1]->getVerticalAlignment());
+    ASSERT_EQ(Size(22, 24), attachments[1]->getSize());
+    ASSERT_EQ(static_cast<size_t>(2), attachments[2]->getChildIndex());
+    ASSERT_EQ(InlineViewVerticalAlignment::Bottom, attachments[2]->getVerticalAlignment());
+    ASSERT_EQ(Size(33, 36), attachments[2]->getSize());
+    ASSERT_EQ(static_cast<size_t>(3), attachments[3]->getChildIndex());
+    ASSERT_EQ(InlineViewVerticalAlignment::Baseline, attachments[3]->getVerticalAlignment());
+    ASSERT_EQ(Size(44, 14), attachments[3]->getSize());
+}
+
+TEST_P(RuntimeFixture, resolvesInlineViewAttachmentsForTextViewChildren) {
+    wrapper.standaloneRuntime->getViewManager().setManagesChildFramesForClass(STRING_LITERAL("SCValdiTextView"), true);
+
+    auto tree = wrapper.createViewNodeTreeAndContext(
+        STRING_LITERAL("InlineViewTextViewAttribute@test/src/ManagedChildFrames"), Value(), Value());
+
+    wrapper.waitUntilAllUpdatesCompleted();
+    tree->setLayoutSpecs(Size(200, 200), LayoutDirectionLTR);
+
+    auto textViewNodes = findViewNodesWithId(tree->getRootViewNode(), "inlineTextView");
+    auto childNodes = findViewNodesWithId(tree->getRootViewNode(), "textViewInlineChild");
+    ASSERT_EQ(static_cast<size_t>(1), textViewNodes.size());
+    ASSERT_EQ(static_cast<size_t>(1), childNodes.size());
+
+    auto* textViewNode = textViewNodes[0];
+    auto* childNode = childNodes[0];
+    ASSERT_TRUE(textViewNode->managesChildFrames());
+    ASSERT_TRUE(childNode->parentManagesChildFrames());
+    ASSERT_EQ(YGPositionTypeAbsolute, YGNodeStyleGetPositionType(childNode->getYogaNode()));
+    ASSERT_EQ(Frame(0, 0, 26, 16), childNode->getCalculatedFrame());
+
+    auto attributedText = getTextAttributeValueFromNode(textViewNode);
+    auto attachments = getInlineViewAttachments(attributedText);
+    ASSERT_EQ(static_cast<size_t>(1), attachments.size());
+    ASSERT_EQ(static_cast<size_t>(0), attachments[0]->getChildIndex());
+    ASSERT_EQ(InlineViewVerticalAlignment::Top, attachments[0]->getVerticalAlignment());
+    ASSERT_EQ(Size(26, 16), attachments[0]->getSize());
+
+    auto childView = StandaloneView::unwrap(childNode->getView());
+    ASSERT_TRUE(childView != nullptr);
+    ASSERT_EQ(Frame(), childView->getFrame());
+}
+
+TEST_P(RuntimeFixture, rejectsInvalidInlineViewChildIndexesFromTSAttributedText) {
+    wrapper.standaloneRuntime->getViewManager().setManagesChildFramesForClass(STRING_LITERAL("SCValdiLabel"), true);
+
+    auto tree = wrapper.createViewNodeTreeAndContext(
+        STRING_LITERAL("InlineViewInvalidChildIndexAttribute@test/src/ManagedChildFrames"), Value(), Value());
+
+    wrapper.waitUntilAllUpdatesCompleted();
+    tree->setLayoutSpecs(Size(200, 200), LayoutDirectionLTR);
+
+    auto labelNodes = findViewNodesWithId(tree->getRootViewNode(), "inlineLabel");
+    auto childNodes = findViewNodesWithId(tree->getRootViewNode(), "inlineChild");
+    ASSERT_EQ(static_cast<size_t>(1), labelNodes.size());
+    ASSERT_EQ(static_cast<size_t>(1), childNodes.size());
+    ASSERT_TRUE(labelNodes[0]->managesChildFrames());
+    ASSERT_TRUE(childNodes[0]->parentManagesChildFrames());
+
+    auto labelView = StandaloneView::unwrap(labelNodes[0]->getView());
+    ASSERT_TRUE(labelView != nullptr);
+    ASSERT_TRUE(labelView->getAttribute(STRING_LITERAL("value")).isUndefined());
+}
+
+TEST_P(RuntimeFixture, inlineViewAttachmentSizeProviderTracksChildLayoutChanges) {
+    wrapper.standaloneRuntime->getViewManager().setManagesChildFramesForClass(STRING_LITERAL("SCValdiLabel"), true);
+
+    auto tree = wrapper.createViewNodeTreeAndContext(
+        STRING_LITERAL("InlineViewDynamicSizeAttribute@test/src/ManagedChildFrames"),
+        inlineViewDynamicSizeViewModel(18, 12),
+        Value());
+
+    wrapper.waitUntilAllUpdatesCompleted();
+    tree->setLayoutSpecs(Size(200, 200), LayoutDirectionLTR);
+
+    auto labelNodes = findViewNodesWithId(tree->getRootViewNode(), "inlineLabel");
+    auto childNodes = findViewNodesWithId(tree->getRootViewNode(), "inlineChild");
+    ASSERT_EQ(static_cast<size_t>(1), labelNodes.size());
+    ASSERT_EQ(static_cast<size_t>(1), childNodes.size());
+    ASSERT_EQ(Frame(0, 0, 18, 12), childNodes[0]->getCalculatedFrame());
+
+    auto attributedText = getTextAttributeValueFromNode(labelNodes[0]);
+    auto attachments = getInlineViewAttachments(attributedText);
+    ASSERT_EQ(static_cast<size_t>(1), attachments.size());
+    auto attachment = attachments[0];
+    ASSERT_EQ(Size(18, 12), attachment->getSize());
+
+    auto labelView = StandaloneView::unwrap(labelNodes[0]->getView());
+    ASSERT_TRUE(labelView != nullptr);
+    auto invalidateLayoutCountBeforeSizeChange = labelView->getInvalidateLayoutCount();
+
+    wrapper.setViewModel(tree->getContext(), inlineViewDynamicSizeViewModel(31, 17));
+    wrapper.waitUntilAllUpdatesCompleted();
+
+    ASSERT_EQ(Frame(0, 0, 31, 17), childNodes[0]->getCalculatedFrame());
+    ASSERT_EQ(Size(31, 17), attachment->getSize());
+
+    tree->setLayoutSpecs(Size(200, 200), LayoutDirectionLTR);
+
+    auto updatedChildNodes = findViewNodesWithId(tree->getRootViewNode(), "inlineChild");
+    ASSERT_EQ(static_cast<size_t>(1), updatedChildNodes.size());
+    ASSERT_EQ(Frame(0, 0, 31, 17), updatedChildNodes[0]->getCalculatedFrame());
+    ASSERT_EQ(Size(31, 17), attachment->getSize());
+
+    auto updatedAttributedText = getTextAttributeValueFromNode(labelNodes[0]);
+    auto updatedAttachments = getInlineViewAttachments(updatedAttributedText);
+    ASSERT_EQ(static_cast<size_t>(1), updatedAttachments.size());
+    ASSERT_EQ(Size(31, 17), updatedAttachments[0]->getSize());
+    ASSERT_GT(labelView->getInvalidateLayoutCount(), invalidateLayoutCountBeforeSizeChange);
 }
 
 TEST_P(RuntimeFixture, supportsAccesibilityValueInTextAttribute) {
@@ -6042,7 +6458,7 @@ TEST_P(RuntimeFixture, supportsAccesibilityValueInTextAttribute) {
     auto labelViewNode = rootViewNode->getChildAt(0);
     auto accessibilityValue = labelViewNode->getAccessibilityValue();
 
-    ASSERT_EQ(STRING_LITERAL("Hello World!?!"), accessibilityValue);
+    ASSERT_EQ(STRING_LITERAL("Hello World Code!?!"), accessibilityValue);
 }
 
 TEST_P(RuntimeFixture, FLAKY_workerWorks) {
@@ -6069,7 +6485,9 @@ TEST_P(RuntimeFixture, FLAKY_workerWorks) {
     ASSERT_EQ(res.toString(), "works");
 }
 
-TEST_P(RuntimeFixture, canLockAllJSContexts) {
+// Disabled because the standalone runtime runs the root JS runtime on the test main thread, while
+// lockAllJSContexts synchronously locks worker runtimes and the runtime forbids main-thread-to-worker dispatch.
+TEST_P(RuntimeFixture, DISABLED_canLockAllJSContexts) {
     auto tree1 =
         wrapper.createViewNodeTreeAndContext(STRING_LITERAL("WorkerTest@test/src/WorkerTest"), Value(), Value());
     auto tree2 =
@@ -6163,6 +6581,45 @@ TEST_P(RuntimeFixture, supportsExportedFunction) {
               calculator->toString(snap::valdi_modules::test::CalculatorToStringFormat::DECIMAL));
     ASSERT_EQ(StringBox::fromCString("30"),
               calculator->toString(snap::valdi_modules::test::CalculatorToStringFormat::INTEGER));
+}
+
+TEST_P(RuntimeFixture, resolveAsTypedObjectReturnsTypedObject) {
+    auto result = snap::valdi_modules::test::MakeCalculator::resolveAsTypedObject(
+        *wrapper.runtime->getJavaScriptRuntime(), nullptr);
+    ASSERT_TRUE(result) << result.description();
+
+    auto typedObject = result.value();
+    ASSERT_NE(typedObject, nullptr);
+
+    // The TypedObject wraps a class schema named "MakeCalculator" with one property (the function).
+    ASSERT_EQ(typedObject->getClassName(), StringBox::fromCString("MakeCalculator"));
+    ASSERT_EQ(typedObject->getPropertiesSize(), 1u);
+
+    // Property 0 should be the callable function.
+    const auto& functionValue = typedObject->getProperty(0);
+    ASSERT_TRUE(functionValue.isFunction());
+}
+
+TEST_P(RuntimeFixture, registeredSchemaReturnsValidSchema) {
+    auto& schema = snap::valdi_modules::test::MakeCalculator::registeredSchema();
+    ASSERT_EQ(schema.getClassName(), StringBox::fromCString("MakeCalculator"));
+
+    auto classSchemaResult = schema.getResolvedClassSchema();
+    ASSERT_TRUE(classSchemaResult) << classSchemaResult.description();
+
+    auto classSchema = classSchemaResult.value();
+    ASSERT_EQ(classSchema->getClassName(), StringBox::fromCString("MakeCalculator"));
+
+    // MakeCalculator has one property: the makeCalculator function itself.
+    ASSERT_EQ(classSchema->getPropertiesSize(), 1u);
+    const auto& prop = classSchema->getProperty(0);
+    ASSERT_EQ(prop.name, StringBox::fromCString("makeCalculator"));
+    ASSERT_TRUE(prop.schema.isFunction());
+
+    // makeCalculator() takes 0 parameters.
+    auto* funcSchema = prop.schema.getFunction();
+    ASSERT_NE(funcSchema, nullptr);
+    ASSERT_EQ(funcSchema->getParametersSize(), 0u);
 }
 
 TEST_P(RuntimeFixture, supportsLongObject) {
@@ -7307,6 +7764,78 @@ TEST_P(RuntimeFixture, handlesFailureSafelyInSymbolication) {
     ASSERT_EQ(static_cast<size_t>(1), messageHandler->messages().errors.size());
     ASSERT_TRUE(messageHandler->messages().errors[0].second.hasPrefix(
         "Recoverable JS Error while performing action 'symbolicateError'\n[caused by]: I Am Broken"));
+}
+
+TEST_P(RuntimeFixture, convertJSErrorFallsBackToValueStringForEmptyMessage) {
+    auto finalError = Error("Invalid error");
+
+    wrapper.runtime->getJavaScriptRuntime()->dispatchOnJsThread(
+        nullptr, JavaScriptTaskScheduleTypeAlwaysSync, 0, [&](JavaScriptEntryParameters& entry) {
+            auto error = entry.jsContext.newError("", std::nullopt, entry.exceptionTracker);
+            if (!entry.exceptionTracker) {
+                return;
+            }
+            auto retainedError = JSValueRef::makeRetained(entry.jsContext, error.get());
+
+            finalError = convertJSErrorToValdiError(entry.jsContext, retainedError, nullptr);
+        });
+
+    ASSERT_FALSE(finalError.toStringBox().contains("Unable to build exception message"));
+    ASSERT_TRUE(finalError.toStringBox().hasPrefix("Error"));
+}
+
+TEST_P(RuntimeFixture, convertJSErrorFallsBackToValueStringWhenMessageGetterThrows) {
+    std::string symbolicateModuleBody = R"""(
+    module.exports.symbolicate = function(error) {
+        return { get message() { throw new Error('unreadable'); } };
+    };
+    )""";
+
+    wrapper.hotReload(STRING_LITERAL("valdi_core"), STRING_LITERAL("src/Symbolicator.js"), symbolicateModuleBody);
+
+    auto finalError = Error("Invalid error");
+
+    wrapper.runtime->getJavaScriptRuntime()->dispatchOnJsThread(
+        nullptr, JavaScriptTaskScheduleTypeAlwaysSync, 0, [&](JavaScriptEntryParameters& entry) {
+            auto error = entry.jsContext.newError("This is an error", std::nullopt, entry.exceptionTracker);
+            if (!entry.exceptionTracker) {
+                return;
+            }
+            auto retainedError = JSValueRef::makeRetained(entry.jsContext, error.get());
+
+            finalError = convertJSErrorToValdiError(entry.jsContext, retainedError, nullptr);
+        });
+
+    ASSERT_FALSE(finalError.toStringBox().contains("Unable to build exception message"));
+    ASSERT_TRUE(finalError.toStringBox().hasPrefix("[object Object]"));
+}
+
+TEST_P(RuntimeFixture, convertJSErrorReportsValueTypeWhenUnstringifiable) {
+    std::string symbolicateModuleBody = R"""(
+    module.exports.symbolicate = function(error) {
+        return {
+            get message() { throw new Error('unreadable'); },
+            toString: function() { throw new Error('unstringifiable'); }
+        };
+    };
+    )""";
+
+    wrapper.hotReload(STRING_LITERAL("valdi_core"), STRING_LITERAL("src/Symbolicator.js"), symbolicateModuleBody);
+
+    auto finalError = Error("Invalid error");
+
+    wrapper.runtime->getJavaScriptRuntime()->dispatchOnJsThread(
+        nullptr, JavaScriptTaskScheduleTypeAlwaysSync, 0, [&](JavaScriptEntryParameters& entry) {
+            auto error = entry.jsContext.newError("This is an error", std::nullopt, entry.exceptionTracker);
+            if (!entry.exceptionTracker) {
+                return;
+            }
+            auto retainedError = JSValueRef::makeRetained(entry.jsContext, error.get());
+
+            finalError = convertJSErrorToValdiError(entry.jsContext, retainedError, nullptr);
+        });
+
+    ASSERT_TRUE(finalError.toStringBox().hasPrefix("Unable to build exception message (thrown value type:"));
 }
 
 TEST_P(RuntimeFixture, supportsUncaughtExceptionHandler) {

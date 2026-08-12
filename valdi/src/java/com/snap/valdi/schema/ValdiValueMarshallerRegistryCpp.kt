@@ -14,6 +14,14 @@ class ValdiValueMarshallerRegistryCpp: NativeHandleWrapper(nativeCreate()), Vald
         nativeDestroy(handle)
     }
 
+    override fun setDescriptorClosureEnabled(enabled: Boolean) {
+        nativeSetDescriptorClosureEnabled(nativeHandle, enabled)
+    }
+
+    override fun setLazyFunctionReturnMarshallerEnabled(enabled: Boolean) {
+        nativeSetLazyFunctionReturnMarshallerEnabled(nativeHandle, enabled)
+    }
+
     override fun marshallObject(cls: Class<*>, marshaller: ValdiMarshaller, obj: Any): Int {
         return nativeMarshallObject(nativeHandle, cls.name, marshaller.nativeHandle, obj)
     }
@@ -66,6 +74,10 @@ class ValdiValueMarshallerRegistryCpp: NativeHandleWrapper(nativeCreate()), Vald
         private external fun nativeCreate(): Long
         @JvmStatic
         private external fun nativeDestroy(ptr: Long)
+        @JvmStatic
+        private external fun nativeSetDescriptorClosureEnabled(ptr: Long, enabled: Boolean)
+        @JvmStatic
+        private external fun nativeSetLazyFunctionReturnMarshallerEnabled(ptr: Long, enabled: Boolean)
         @JvmStatic
         private external fun nativeMarshallObject(ptr: Long,
                                                   className: String,

@@ -210,6 +210,7 @@ export function registerTextFieldElements(): void {
 export class WebValdiTextField extends WebValdiLayout {
   public type = 'textfield';
   public declare htmlElement: ValdiInput;
+  private _callbackListeners: { key: string; eventType: string; handler: EventListener }[] = [];
 
   createHtmlElement() {
     const element = document.createElement('valdi-input') as ValdiInput;
@@ -235,77 +236,96 @@ export class WebValdiTextField extends WebValdiLayout {
     return element;
   }
 
+  private replaceListener(key: string, eventType: string, handler: EventListener | undefined) {
+    const existing = this._callbackListeners.findIndex(l => l.key === key);
+    if (existing >= 0) {
+      this.htmlElement.removeEventListener(this._callbackListeners[existing].eventType, this._callbackListeners[existing].handler);
+      this._callbackListeners.splice(existing, 1);
+    }
+    if (handler) {
+      this.htmlElement.addEventListener(eventType, handler);
+      this._callbackListeners.push({ key, eventType, handler });
+    }
+  }
+
   changeAttribute(attributeName: string, attributeValue: any): void {
     switch (attributeName) {
-      // Callbacks
-      // Event shapes must use { text, selectionStart, selectionEnd } to match
-      // WebValdiTextView and the EditTextEvent interface expected by Valdi components.
-      // We read from this.htmlElement (ValdiInput) which exposes value/selection
-      // getters that forward to the inner <input> inside the shadow DOM.
-      case 'onWillChange':
-        this.htmlElement.addEventListener('beforeinput', (event: InputEvent) => {
+      case 'onWillChange': {
+        const cb = attributeValue;
+        const handler = cb ? ((event: InputEvent) => {
           const el = this.htmlElement;
-          const result = attributeValue({
+          const result = cb({
             text: el.value,
             selectionStart: el.selectionStart ?? 0,
             selectionEnd: el.selectionEnd ?? 0,
           });
-          // Only prevent input when the callback explicitly returns false.
-          // Returning undefined (e.g. when no onWillChange is set on the component)
-          // means "allow the change". This matches WebValdiTextView's behavior.
           if (result === false) {
             event.preventDefault();
           }
-        });
+        }) as EventListener : undefined;
+        this.replaceListener('onWillChange', 'beforeinput', handler);
         return;
-      case 'onChange': // Replaces onChangeText
-        this.htmlElement.addEventListener('input', () => {
+      }
+      case 'onChange': {
+        const cb = attributeValue;
+        const handler = cb ? (() => {
           const el = this.htmlElement;
           this.attributeDelegate?.updateAttribute(this.id, "value", el.value);
-          attributeValue({
+          cb({
             text: el.value,
             selectionStart: el.selectionStart ?? 0,
             selectionEnd: el.selectionEnd ?? 0,
           });
-        });
+        }) as EventListener : undefined;
+        this.replaceListener('onChange', 'input', handler);
         return;
-      case 'onEditBegin': // Replaces onFocus
-        this.htmlElement.addEventListener('focus', () => {
+      }
+      case 'onEditBegin': {
+        const cb = attributeValue;
+        const handler = cb ? (() => {
           const el = this.htmlElement;
-          attributeValue({
+          cb({
             text: el.value,
             selectionStart: el.selectionStart ?? 0,
             selectionEnd: el.selectionEnd ?? 0,
           });
-        });
+        }) as EventListener : undefined;
+        this.replaceListener('onEditBegin', 'focus', handler);
         return;
-      case 'onEditEnd': // Replaces onBlur
+      }
+      case 'onEditEnd':
         this.htmlElement.setOnEditEnd(attributeValue);
         return;
-      case 'onReturn':
-        this.htmlElement.addEventListener('keydown', (event: KeyboardEvent) => {
+      case 'onReturn': {
+        const cb = attributeValue;
+        const handler = cb ? ((event: KeyboardEvent) => {
             if (event.key === 'Enter') {
                 const el = this.htmlElement;
-                attributeValue({
+                cb({
                   text: el.value,
                   selectionStart: el.selectionStart ?? 0,
                   selectionEnd: el.selectionEnd ?? 0,
                 });
             }
-        });
+        }) as EventListener : undefined;
+        this.replaceListener('onReturn', 'keydown', handler);
         return;
-      case 'onWillDelete':
-        this.htmlElement.addEventListener('keydown', (event: KeyboardEvent) => {
+      }
+      case 'onWillDelete': {
+        const cb = attributeValue;
+        const handler = cb ? ((event: KeyboardEvent) => {
             if (event.key === 'Backspace' || event.key === 'Delete') {
                 const el = this.htmlElement;
-                attributeValue({
+                cb({
                   text: el.value,
                   selectionStart: el.selectionStart ?? 0,
                   selectionEnd: el.selectionEnd ?? 0,
                 });
             }
-        });
+        }) as EventListener : undefined;
+        this.replaceListener('onWillDelete', 'keydown', handler);
         return;
+      }
       case 'onSelectionChange':
         this.htmlElement.setOnSelectionChange(attributeValue);
         return;
@@ -410,7 +430,12 @@ export class WebValdiTextField extends WebValdiLayout {
 
       // Keyboard & Input
       case 'contentType':
-        this.htmlElement.setAttribute(attributeName, getContentType(attributeValue));
+        // Map Valdi's contentType to HTML <input> attributes. Mirrors the
+        // native binders (iOS SCValdiTextInputSetContentTypeValues, Android
+        // EditTextAttributesBinder.applyContentType) which treat contentType
+        // as authoritative over keyboard, masking, and suggestion behavior —
+        // so this helper sets all the related attrs together.
+        applyContentType(this.htmlElement, attributeValue);
         return;
       case 'keyboardType':
         this.htmlElement.setAttribute('inputmode', attributeValue);
@@ -482,17 +507,52 @@ function applyOpacity(color: string, opacityValue: string): string {
     return color;
 }
 
-function getContentType(type: string) {
-  switch (type) {
-    case 'phoneNumber':
-      return 'tel';
-    case 'email':
-      return 'email';
-    case 'password':
-      return 'password';
-    case 'url':
-      return 'url';
-    default:
-      return 'text';
+type ContentTypeAttrs = {
+  type: string;
+  inputmode?: string;
+  pattern?: string;
+  autocomplete?: string;
+  autocorrect?: string;
+  spellcheck?: string;
+};
+
+// Mirrors the cross-platform contentType → input traits mapping used by the
+// iOS (SCValdiTextInputSetContentTypeValues) and Android
+// (EditTextAttributesBinder.applyContentType) binders. The native binders
+// rewrite the full set of related traits on every change; we follow suit so
+// stale state from a prior contentType can't leak through.
+const CONTENT_TYPE_ATTRS: Record<string, ContentTypeAttrs> = {
+  default: { type: 'text' },
+  phoneNumber: { type: 'tel' },
+  email: { type: 'email' },
+  password: { type: 'password' },
+  passwordNumber: { type: 'password', inputmode: 'numeric', pattern: '[0-9]*' },
+  passwordVisible: { type: 'text', autocomplete: 'off' },
+  url: { type: 'url' },
+  number: { type: 'text', inputmode: 'numeric', pattern: '[0-9]*' },
+  numberDecimal: { type: 'text', inputmode: 'decimal' },
+  // Mirrors iOS UIKeyboardTypeNumbersAndPunctuation — full keyboard so the
+  // minus key is reachable. inputmode=decimal hides minus on iOS.
+  numberDecimalSigned: { type: 'text', inputmode: 'text', pattern: '-?[0-9]*[.,]?[0-9]*' },
+  noSuggestions: { type: 'text', autocomplete: 'off', autocorrect: 'off', spellcheck: 'false' },
+};
+
+const CONTENT_TYPE_SECONDARY_ATTRS = ['inputmode', 'pattern', 'autocomplete', 'autocorrect', 'spellcheck'] as const;
+
+function setOrRemoveAttr(element: HTMLElement, name: string, value: string | undefined): void {
+  if (value === undefined) {
+    if (element.hasAttribute(name)) {
+      element.removeAttribute(name);
+    }
+  } else if (element.getAttribute(name) !== value) {
+    element.setAttribute(name, value);
+  }
+}
+
+function applyContentType(element: HTMLElement, type: string): void {
+  const attrs = CONTENT_TYPE_ATTRS[type] ?? CONTENT_TYPE_ATTRS.default;
+  setOrRemoveAttr(element, 'type', attrs.type);
+  for (const name of CONTENT_TYPE_SECONDARY_ATTRS) {
+    setOrRemoveAttr(element, name, attrs[name]);
   }
 }

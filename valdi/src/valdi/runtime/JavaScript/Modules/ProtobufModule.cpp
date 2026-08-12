@@ -129,16 +129,7 @@ static JSValueRef getProtobufNonRepeatedField(ProtobufArena& arena,
 
             const auto* string = field.getString();
             if (string != nullptr) {
-                switch (string->encoding()) {
-                    case StaticString::Encoding::UTF8:
-                        return jsContext.newStringUTF8(string->utf8StringView(), callContext.getExceptionTracker());
-                    case StaticString::Encoding::UTF16:
-                        return jsContext.newStringUTF16(string->utf16StringView(), callContext.getExceptionTracker());
-                    case StaticString::Encoding::UTF32: {
-                        auto storage = string->utf8Storage();
-                        return jsContext.newStringUTF8(storage.toStringView(), callContext.getExceptionTracker());
-                    }
-                }
+                return jsContext.newString(*string, callContext.getExceptionTracker());
             }
 
             return jsContext.newUndefined();
@@ -787,6 +778,10 @@ JSValueRef ProtobufModule::arenaSetMessageField(JSFunctionNativeCallContext& cal
     auto fieldIndex = getIndex(callContext, 2);
     CHECK_CALL_CONTEXT(callContext);
 
+    // Serialize descriptor access (e.g. message_type() on message-typed fields) against
+    // concurrent lazy DescriptorPool mutation from other JS runtimes.
+    auto factoryLocks = arenaResult->lockRetainedMessageFactories();
+
     auto message = arenaResult->getMessage(messageIndex, callContext.getExceptionTracker());
     CHECK_CALL_CONTEXT(callContext);
 
@@ -812,6 +807,10 @@ JSValueRef ProtobufModule::arenaGetMessageFields(JSFunctionNativeCallContext& ca
 
     auto messageIndex = getIndex(callContext, 1);
     CHECK_CALL_CONTEXT(callContext);
+
+    // Serialize descriptor access (e.g. message_type() on message-typed fields) against
+    // concurrent lazy DescriptorPool mutation from other JS runtimes.
+    auto factoryLocks = arena->lockRetainedMessageFactories();
 
     auto* message = arena->getMessage(messageIndex, callContext.getExceptionTracker());
     CHECK_CALL_CONTEXT(callContext);
@@ -976,7 +975,11 @@ JSValueRef ProtobufModule::getNamespaceEntries(JSFunctionNativeCallContext& call
     auto namespaceId = getIndex(callContext, 1);
     CHECK_CALL_CONTEXT(callContext);
 
-    auto namespaceEnties = messageFactory->getNamespaceEntriesForId(namespaceId, callContext.getExceptionTracker());
+    std::vector<ProtobufMessageFactory::NamespaceEntry> namespaceEnties;
+    {
+        auto factoryLock = messageFactory->lock();
+        namespaceEnties = messageFactory->getNamespaceEntriesForId(namespaceId, callContext.getExceptionTracker());
+    }
     CHECK_CALL_CONTEXT(callContext);
 
     return namespaceEntriesToJS(callContext.getContext(), callContext.getExceptionTracker(), namespaceEnties);
@@ -984,8 +987,13 @@ JSValueRef ProtobufModule::getNamespaceEntries(JSFunctionNativeCallContext& call
 
 JSValueRef ProtobufModule::doLoadMessagesFromFactory(const Ref<ProtobufMessageFactory>& messageFactory,
                                                      JSFunctionNativeCallContext& callContext) {
-    auto descriptorNames = messageFactory->getDescriptorNames();
-    auto rootNamespaceEntries = messageFactory->getRootNamespaceEntries();
+    std::vector<std::string> descriptorNames;
+    std::vector<ProtobufMessageFactory::NamespaceEntry> rootNamespaceEntries;
+    {
+        auto factoryLock = messageFactory->lock();
+        descriptorNames = messageFactory->getDescriptorNames();
+        rootNamespaceEntries = messageFactory->getRootNamespaceEntries();
+    }
 
     // Step 2: We build a description of all the registered messages and fields along with their indexes
     // in which they can be reached in the message factory.

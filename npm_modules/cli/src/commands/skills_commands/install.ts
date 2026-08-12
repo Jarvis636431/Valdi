@@ -2,7 +2,7 @@ import type { Argv } from 'yargs';
 import ora from 'ora';
 import { makeCommandHandler } from '../../utils/errorUtils';
 import type { ArgumentsResolver } from '../../utils/ArgumentsResolver';
-import { fetchRegistry, fetchSkillContent } from '../../utils/skillsRegistry';
+import { fetchRegistry, fetchSkillContent, getSkillResourceDir } from '../../utils/skillsRegistry';
 import { detectAdapters, getAdapterByName } from '../../utils/skillsAdapters';
 import { ANSI_COLORS } from '../../core/constants';
 import { wrapInColor } from '../../utils/logUtils';
@@ -77,8 +77,9 @@ async function skillsInstall(argv: ArgumentsResolver<CommandParameters>) {
     const installSpinner = ora(`Installing ${skill.name}…`).start();
     try {
       const content = await fetchSkillContent(skill.path);
+      const resourceDir = getSkillResourceDir(skill.path) ?? undefined;
       for (const adapter of adapters) {
-        adapter.install(skill.name, content, skill);
+        adapter.install(skill.name, content, skill, resourceDir);
       }
       installSpinner.succeed(`Installed ${wrapInColor(skill.name, ANSI_COLORS.GREEN_COLOR)}`);
     } catch (error) {
@@ -87,7 +88,11 @@ async function skillsInstall(argv: ArgumentsResolver<CommandParameters>) {
     }
   }
 
+  const claudeInstalled = adapters.some((a) => a.name === 'claude');
   console.log(`\nDone. Run ${wrapInColor('valdi skills list', ANSI_COLORS.BLUE_COLOR)} to see installed skills.`);
+  if (claudeInstalled) {
+    console.log(wrapInColor('Restart Claude Code to activate the new skills.', ANSI_COLORS.YELLOW_COLOR));
+  }
   if (!categoryFilter) {
     console.log(
       `Tip: install only module-development skills with ${wrapInColor('valdi skills install --category=client', ANSI_COLORS.BLUE_COLOR)}`,

@@ -13,6 +13,7 @@
 #include "valdi_core/cpp/Utils/Function.hpp"
 #include "valdi_core/cpp/Utils/Shared.hpp"
 
+#include <string>
 #include <vector>
 
 namespace Valdi {
@@ -78,6 +79,24 @@ public:
      */
     virtual std::vector<JavaScriptCapturedStacktrace> captureStackTraces(
         std::chrono::steady_clock::duration timeout) = 0;
+
+    // Extra attribution for ANR messages (" [stuck-in: <native call>] [module: <module>]"), or empty
+    // if unavailable or ANR diagnostics are off. Reads saved native state without running JS, so it
+    // is safe to call while the JS thread is stuck.
+    virtual std::string getANRAttributionInfo() const {
+        return {};
+    }
+
+    /**
+     Whether the scheduler is far enough along in its lifecycle for unresponsiveness to be
+     reported as an ANR. Runtime bootstrap (JS context creation plus core bundle evaluation)
+     legitimately occupies the JS thread past the detection threshold on slow devices, so the
+     detector excludes that window from ANR accounting. Must be safe to call from any thread
+     while the JS thread is busy.
+     */
+    virtual bool isReadyForANRDetection() const {
+        return true;
+    }
 };
 
 } // namespace Valdi
